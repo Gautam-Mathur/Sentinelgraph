@@ -555,10 +555,12 @@ def find_attack_paths(
         while heap:
             if time.perf_counter() > deadline:
                 is_truncated = True
+                candidate_search_complete = False
                 truncation_reason = "timeout_exceeded"
                 break
             if candidates_evaluated >= constraints.max_candidates:
                 is_truncated = True
+                candidate_search_complete = False
                 truncation_reason = "max_candidates_reached"
                 break
 
