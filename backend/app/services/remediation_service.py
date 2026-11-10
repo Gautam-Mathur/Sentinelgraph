@@ -113,7 +113,11 @@ def simulate_remediation_plan(
         transforms=transforms_in,
         baseline_metrics=baseline_dict,
         modelled_metrics=modelled_dict,
-        delta_summary={**comp.delta_summary, "disclaimer": comp.disclaimer},
+        delta_summary={
+            **comp.delta_summary,
+            "disclaimer": comp.disclaimer,
+            "applied_transforms": comp.applied_transforms,
+        },
         is_modelled_only=True,
         created_by_user_id=ctx.user_id,
     )
@@ -133,7 +137,12 @@ def simulate_remediation_plan(
         details={
             "assessment_id": str(assessment.id),
             "transforms_count": len(transforms_in),
-            "paths_eliminated": comp.delta_summary["paths_eliminated"],
+            "sampled_paths_eliminated": comp.delta_summary["sampled_paths_eliminated"],
+            "paths_eliminated_is_complete": comp.delta_summary["paths_eliminated_is_complete"],
+            "possible_residual_reachability": comp.delta_summary["possible_residual_reachability"],
+            "confirmed_residual_reachability": comp.delta_summary["confirmed_residual_reachability"],
+            "reachability_verification_complete": comp.delta_summary["reachability_verification_complete"],
+            "applied_transforms": comp.applied_transforms,
         },
     )
     db.commit()
