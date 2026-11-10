@@ -5,7 +5,7 @@
 ## Purpose and non-probability guarantee
 
 The priority score is a deterministic, normalised remediation-triage ranking on
-[`0`, `100`]. It is **not** a breach probability,
+[`0, 100`]. It is **not** a breach probability,
 exploit-likelihood percentage, prediction of compromise, or SLA estimate.
 
 > Weighted, normalised priority ranking (0-100) for remediation triage. Not a calibrated statistical probability of breach.
