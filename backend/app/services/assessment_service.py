@@ -230,6 +230,13 @@ def load_domain_graph_inputs(
                     "asset_type": a.asset_type,
                     "canonical_key": a.canonical_key,
                     "owner": a.owner,
+                    # Preserve CVE identity in the graph; a count alone cannot support
+                    # a CVE-specific remediation simulation.
+                    "vulnerability_status": {
+                        str(f.cve_id).upper(): "open"
+                        for f in asset_findings
+                        if f.cve_id
+                    },
                 },
             )
         )
