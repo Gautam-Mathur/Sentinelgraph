@@ -44,6 +44,93 @@ def test_suppressed_and_expired_edges_excluded_and_scc_detected() -> None:
     assert not graph.has_edge("asset:web", "asset:db")
 
 
+def test_parallel_relationship_centrality_is_keyed_and_weight_aware() -> None:
+    now = datetime.now(UTC)
+    nodes = [
+        GraphNode(NodeKind.ASSET, "web", "web", is_external_entry=True),
+        GraphNode(NodeKind.ASSET, "app", "app"),
+    ]
+    edges = [
+        GraphEdge(
+            "fast-connect",
+            NodeKind.ASSET,
+            "web",
+            NodeKind.ASSET,
+            "app",
+            RelationType.CONNECTS_TO,
+            FactKind.OBSERVED_FACT,
+            0.99,
+            now,
+            edge_metadata={"network_reachable": True},
+        ),
+        GraphEdge(
+            "slow-expose",
+            NodeKind.ASSET,
+            "web",
+            NodeKind.ASSET,
+            "app",
+            RelationType.EXPOSES,
+            FactKind.OBSERVED_FACT,
+            0.30,
+            now,
+            edge_metadata={"network_reachable": True},
+        ),
+    ]
+
+    graph, stats = build_networkx_graph(nodes, edges)
+
+    assert graph.number_of_edges() == 2
+    assert set(stats.edge_betweenness) == {"fast-connect", "slow-expose"}
+    assert stats.edge_betweenness["fast-connect"] > stats.edge_betweenness["slow-expose"]
+    assert stats.edge_betweenness["slow-expose"] == 0.0
+    by_id = {item["edge_id"]: item for item in stats.top_bridge_edges}
+    assert by_id["fast-connect"]["betweenness_centrality"] > by_id["slow-expose"]["betweenness_centrality"]
+
+
+def test_explicitly_false_cve_precondition_is_excluded_from_active_graph() -> None:
+    now = datetime.now(UTC)
+    nodes = [
+        GraphNode(
+            NodeKind.ASSET,
+            "web",
+            "web",
+            is_external_entry=True,
+            metadata={"vulnerability_status": {"CVE-2024-12345": "patched"}},
+        ),
+        GraphNode(NodeKind.ASSET, "app", "app", criticality="critical", is_crown_jewel=True),
+    ]
+    edge = GraphEdge(
+        "patched-cve-edge",
+        NodeKind.ASSET,
+        "web",
+        NodeKind.ASSET,
+        "app",
+        RelationType.CONNECTS_TO,
+        FactKind.OBSERVED_FACT,
+        0.90,
+        now,
+        edge_metadata={
+            "network_reachable": True,
+            "requires_cve": "CVE-2024-12345",
+        },
+    )
+
+    graph, stats = build_networkx_graph(nodes, [edge])
+
+    assert edge.confidence == 0.90
+    assert graph.number_of_edges() == 0
+    assert stats.edge_count == 0
+    assert stats.blocked_precondition_edge_count == 1
+    assert find_attack_paths(
+        graph,
+        PathSearchConstraints(
+            start_node_keys=["asset:web"],
+            target_node_keys=["asset:app"],
+            max_hops=2,
+        ),
+    ).paths == []
+
+
 def test_dijkstra_and_bfs_deterministic_and_hop_bounded() -> None:
     nodes, edges = _sample_graph_data()
     graph, _ = build_networkx_graph(nodes, edges)
@@ -172,7 +259,27 @@ def test_reachability_verifier_is_independent_of_candidate_cap_and_hop_limit() -
         ),
     )
     assert capped.is_truncated is True
+    assert capped.candidate_search_complete is False
+    assert capped.top_k_is_global is False
+    assert capped.ranking_scope == "evaluated_candidate_pool"
     assert len(capped.paths) == 1
+    assert capped.paths[0].algorithm_params["top_k_is_global"] is False
+
+    # A top_k response can be globally ranked when candidate enumeration itself completed.
+    exhaustive_top_k = find_attack_paths(
+        graph,
+        PathSearchConstraints(
+            start_node_keys=["asset:web"],
+            target_node_keys=["asset:db"],
+            max_hops=5,
+            max_candidates=10,
+            top_k=1,
+        ),
+    )
+    assert exhaustive_top_k.candidate_search_complete is True
+    assert exhaustive_top_k.top_k_is_global is True
+    assert exhaustive_top_k.ranking_scope == "global_candidate_universe"
+    assert exhaustive_top_k.is_truncated is True  # response was clipped to top_k
 
     verification = verify_reachability(
         graph,
