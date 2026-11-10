@@ -88,11 +88,17 @@ the vulnerability remains a prerequisite. `patched`, `mitigated`, `remediated`,
 
 ## CVE patch simulation semantics
 
-A `PATCH_VULNERABILITY` sandbox transform requires a CVE identifier. For matching
-node/edge scope it sets `vulnerability_status[CVE-ID] = "patched"` and records the
-CVE in `remediated_cves`. A matching node's open-CVE observation count is decremented
-by one (never below zero). Edge confidence is unchanged: confidence measures the
-strength of relationship evidence and is independent of vulnerability remediation.
+A `PATCH_VULNERABILITY` sandbox transform requires a CVE identifier and a matching
+CVE-specific reference. Asset nodes receive per-CVE state from their open findings;
+a relationship can also establish a reference through `requires_cve`. An asset ID and
+an aggregate open-CVE count alone are not enough to patch an arbitrary CVE.
+
+For matching node/edge scope the transform sets
+`vulnerability_status[CVE-ID] = "patched"` and records the CVE in
+`remediated_cves`. A matching node's open-finding count is decremented by the number
+of open findings recorded for that CVE (never below zero). Edge confidence is
+unchanged: confidence measures the strength of relationship evidence and is
+independent of vulnerability remediation.
 
 This is a sandbox model only. A later evidence import must establish whether the
 vulnerability is actually fixed in the environment.
