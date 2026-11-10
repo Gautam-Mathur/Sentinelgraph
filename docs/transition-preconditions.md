@@ -82,7 +82,13 @@ contradictory evidence (for example, reachability true with an ACL deny) blocks 
 transition. An empty `preconditions` list does not suppress built-in relationship
 checks.
 
-For CVE prerequisites, `open`, `unpatched`, `vulnerable`, and `confirmed` mean
+For CVE prerequisites, the evaluator reads `vulnerability_status` and
+`remediated_cves` from the relationship and from its source/target node metadata.
+`requires_cve_on: "source"` or `"target"` can limit endpoint lookup to one side.
+Assessment graph construction carries per-CVE states and open-finding counts from
+the Finding records into asset-node metadata.
+
+`open`, `unpatched`, `vulnerable`, and `confirmed` mean
 the vulnerability remains a prerequisite. `patched`, `mitigated`, `remediated`,
 `fixed`, and `closed` make that prerequisite false and block the transition.
 
