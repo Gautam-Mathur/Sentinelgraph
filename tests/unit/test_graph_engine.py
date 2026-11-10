@@ -227,8 +227,15 @@ def test_explicit_preconditions_do_not_override_mandatory_cve_gate() -> None:
     # remains unknown and therefore cannot pass confirmed-only traversal.
     assert find_attack_paths(graph, constraints).paths == []
     edge.edge_metadata["vulnerability_status"] = {"CVE-2024-56789": "open"}
+    edge.edge_metadata["network_reachable"] = True
+    edge.edge_metadata["acl_action"] = "allow"
     graph_open, _ = build_networkx_graph(nodes, [edge])
     assert len(find_attack_paths(graph_open, constraints).paths) == 1
+
+    # Explicit custom preconditions cannot override a contradictory ACL deny.
+    edge.edge_metadata["acl_action"] = "deny"
+    graph_denied, _ = build_networkx_graph(nodes, [edge])
+    assert find_attack_paths(graph_denied, constraints).paths == []
 
 
 
