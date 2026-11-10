@@ -382,7 +382,7 @@ def evaluate_edge_preconditions(
             )
         )
 
-    cve_condition = _vulnerability_condition(edge)
+    cve_condition = _vulnerability_condition(edge, source_node, target_node)
     if cve_condition is not None:
         outcomes.append(cve_condition)
 
