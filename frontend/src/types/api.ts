@@ -360,12 +360,26 @@ export interface AttackPathItem {
 }
 
 export interface GraphMetricSnapshot {
+  /** Number of returned path candidates; not necessarily the total graph path count. */
   total_paths: number;
+  path_count_semantics?: string;
+  path_search_complete?: boolean;
+  path_search_truncation_reason?: string | null;
   high_confidence_paths: number;
   highest_path_score: number;
   reachable_critical_assets: number;
   reachable_critical_asset_labels: string[];
   key_bridge_nodes: BridgeNodeStat[];
+  reachability_status?: string;
+  reachable_within_max_hops?: boolean;
+  reachable_unbounded?: boolean;
+  confirmed_reachable_unbounded?: boolean;
+  reachability_verification_complete?: boolean;
+  reachable_target_keys?: string[];
+  witness_path_edge_ids?: string[];
+  conditional_witness_edge_ids?: string[];
+  reachability_examined_nodes?: number;
+  reachability_examined_edges?: number;
 }
 
 export interface RemediationItem {
@@ -383,6 +397,12 @@ export interface RemediationItem {
     critical_assets_unlinked: number;
     high_confidence_paths_reduced: number;
     disclaimer: string;
+    sampled_paths_eliminated?: number;
+    paths_eliminated_is_complete?: boolean;
+    possible_reachability_eliminated?: boolean;
+    possible_residual_reachability?: boolean;
+    confirmed_residual_reachability?: boolean;
+    reachability_verification_complete?: boolean;
   };
   is_modelled_only: boolean;
   validation_assessment_id: string | null;
@@ -581,6 +601,11 @@ export interface EdgeBlastRadius {
   cumulative_risk_score: number;
   max_path_score: number;
   residual_paths_if_cut: number;
+  residual_paths_semantics?: string;
+  residual_reachability?: string;
+  residual_reachable?: boolean;
+  reachability_verification_complete?: boolean;
+  residual_witness_edge_ids?: string[];
   is_single_point_chokepoint: boolean;
   action_label: string;
   recommended_transform: Record<string, unknown>;
@@ -593,7 +618,20 @@ export interface CutSetRecommendation {
   effort_score: number;
   baseline_paths: number;
   paths_broken: number;
+  /** Enumerated candidate count only. Use reachability fields for disconnection claims. */
   residual_paths: number;
+  residual_paths_semantics?: string;
+  reachability_status?: string;
+  reachable_unbounded?: boolean;
+  reachable_within_max_hops?: boolean;
+  confirmed_reachable_unbounded?: boolean;
+  reachability_verification_complete?: boolean;
+  witness_path_edge_ids?: string[];
+  conditional_witness_edge_ids?: string[];
+  path_search_complete?: boolean;
+  path_search_truncation_reason?: string | null;
+  verification_status?: "MODEL_VERIFIED_CUT" | "PARTIAL_CUT" | "INDETERMINATE" | string;
+  minimum_cut_proven?: boolean;
   coverage_pct: number;
   critical_assets_unlinked: number;
   highest_score_reduction: number;
@@ -690,10 +728,22 @@ export interface AssessmentIntelligenceResponse {
   graph_version: number;
   graph_stats: AssessmentItem["graph_stats"];
   summary: {
+    /** Legacy count of returned candidates, not necessarily all graph paths. */
     total_active_paths: number;
+    path_count_semantics?: string;
+    path_search_complete?: boolean;
+    path_search_truncation_reason?: string | null;
+    baseline_possible_reachability?: boolean;
+    baseline_reachable_within_max_hops?: boolean;
+    baseline_confirmed_reachability?: boolean;
+    reachability_verification_complete?: boolean;
+    reachable_target_keys?: string[];
     reachable_crown_jewels: string[];
     single_point_chokepoints_count: number;
+    /** Deprecated: always null until a globally optimal cut is actually proven. */
     min_cut_size: number | null;
+    candidate_cut_size?: number | null;
+    minimum_cut_proven?: boolean;
     inferred_dependent_paths: number;
     observed_only_paths: number;
     uncorroborated_acl_edges: number;
