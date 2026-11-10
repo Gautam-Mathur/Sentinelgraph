@@ -216,7 +216,10 @@ def _edge_allowed(
     if constraints.allowed_edge_types is not None and edge.relation_type not in constraints.allowed_edge_types:
         return False
     return edge_preconditions_allow(
-        edge, allow_unknown=constraints.allow_unknown_preconditions
+        edge,
+        allow_unknown=constraints.allow_unknown_preconditions,
+        source_node=source_node,
+        target_node=target_node,
     )
 
 
@@ -374,7 +377,9 @@ def _bfs_reachability_witness(
         if any(
             outcome["status"] == "unknown"
             for outcome in evaluate_edge_preconditions(
-                graph.get_edge_data(node_path[idx], node_path[idx + 1], edge_id)["edge"]
+                graph.get_edge_data(node_path[idx], node_path[idx + 1], edge_id)["edge"],
+                graph.nodes[node_path[idx]]["node"],
+                graph.nodes[node_path[idx + 1]]["node"],
             )
         )
     ]
@@ -600,7 +605,7 @@ def find_attack_paths(
                 src_node=src_n,
                 tgt_node=tgt_n,
             )
-            step_data.precondition_outcomes = evaluate_edge_preconditions(edge_obj)
+            step_data.precondition_outcomes = evaluate_edge_preconditions(edge_obj, src_n, tgt_n)
             for outcome in step_data.precondition_outcomes:
                 step_data.preconditions.append(
                     f"{outcome['kind']}: {outcome['status']} — {outcome['reason']}"
