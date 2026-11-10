@@ -6,6 +6,7 @@ from app.domain.graph_engine import (
     GraphBuildStats,
     build_networkx_graph,
     find_attack_paths,
+    verify_reachability,
 )
 from app.domain.models import (
     AttackPathResult,
@@ -153,25 +154,24 @@ def _verify_and_augment_cut_set(
         transforms=domain_txs,
     )
 
-    # Bounded bypass guard (max 2 residual augmentation steps) in case cutting edges revealed >top_k bypasses
+    # A witness-path BFS, not the bounded candidate list, drives residual-route augmentation.
+    # The guard remains intentionally bounded; any residual after it is reported as partial.
     rounds = 0
-    while sim.modelled.total_paths > 0 and rounds < 2 and len(chosen_ids) < 6:
-        sb_nodes, sb_edges, _ = apply_sandbox_transforms(
-            nodes, edges, domain_txs, min_confidence_threshold=constraints.min_confidence
+    while sim.modelled.reachable_unbounded and rounds < 2 and len(chosen_ids) < 6:
+        witness_edges = [
+            eid
+            for eid in sim.modelled.witness_path_edge_ids
+            if eid in edge_map and eid not in chosen_ids
+        ]
+        if not witness_edges:
+            break
+        best_extra = min(
+            witness_edges,
+            key=lambda eid: (
+                recommended_transform_for_edge(edge_map[eid], node_map)[2],
+                eid,
+            ),
         )
-        res_graph, _ = build_networkx_graph(sb_nodes, sb_edges, as_of=constraints.as_of)
-        res_out = find_attack_paths(res_graph, constraints)
-        if not res_out.paths:
-            break
-        # Pick edge covering most residual paths
-        freq: dict[str, int] = {}
-        for p in res_out.paths:
-            for s in p.steps:
-                if s.relationship_id in edge_map and s.relationship_id not in chosen_ids:
-                    freq[s.relationship_id] = freq.get(s.relationship_id, 0) + 1
-        if not freq:
-            break
-        best_extra = max(sorted(freq.keys()), key=lambda k: freq[k])
         chosen_ids.append(best_extra)
         tx_extra, _, _ = recommended_transform_for_edge(edge_map[best_extra], node_map)
         transforms_dicts.append(tx_extra)
@@ -201,7 +201,14 @@ def _verify_and_augment_cut_set(
                     constraints=constraints,
                     transforms=trial_txs,
                 )
-                if trial_sim.modelled.total_paths <= sim.modelled.total_paths:
+                reachability_no_worse = (
+                    not trial_sim.modelled.reachable_unbounded
+                    or sim.modelled.reachable_unbounded
+                )
+                if (
+                    reachability_no_worse
+                    and trial_sim.modelled.total_paths <= sim.modelled.total_paths
+                ):
                     chosen_ids = trial_ids
                     transforms_dicts = [
                         recommended_transform_for_edge(edge_map[eid], node_map)[0]
@@ -226,22 +233,29 @@ def _verify_and_augment_cut_set(
     eliminated = sim.delta_summary["paths_eliminated"]
     coverage_pct = round((eliminated / base_total) * 100.0, 1) if base_total > 0 else 0.0
 
-    if len(chosen_ids) == 1 and sim.modelled.total_paths == 0:
-        label = f"Single Chokepoint: {recommended_transform_for_edge(edge_map[chosen_ids[0]], node_map)[1]}"
+    model_cut_verified = (
+        sim.modelled.reachability_verification_complete
+        and not sim.modelled.reachable_unbounded
+    )
+    if model_cut_verified and len(chosen_ids) == 1:
+        label = f"Single Model-Verified Chokepoint: {recommended_transform_for_edge(edge_map[chosen_ids[0]], node_map)[1]}"
         rationale = (
-            f"Single graph bridge edge traversed by all {base_total} attack path(s); "
-            "breaking it disconnects every critical target from external entry points."
+            "Independent multi-source BFS found no remaining possible route in the sandbox graph "
+            "after this transform, under the configured scope and transition-precondition policy. "
+            "This verifies the model only, not a live-system remediation."
         )
-    elif sim.modelled.total_paths == 0:
-        label = f"{len(chosen_ids)}-Edge Minimum Cut-Set (100% Path Elimination)"
+    elif model_cut_verified:
+        label = f"{len(chosen_ids)}-Edge Model-Verified Candidate Cut"
         rationale = (
-            f"Minimum multi-edge hitting set removing parallel/bypass routes across all {base_total} "
-            "baseline attack path(s)."
+            "Independent multi-source BFS found no remaining possible route in the sandbox graph "
+            "after these transforms. The candidate search is bounded and does not prove global "
+            "minimum cut cardinality or validate a live-system change."
         )
     else:
-        label = f"{len(chosen_ids)}-Edge Partial Cut ({coverage_pct}% paths eliminated)"
+        label = f"{len(chosen_ids)}-Edge Partial Candidate Cut ({coverage_pct}% sampled paths eliminated)"
         rationale = (
-            f"Eliminates {eliminated} of {base_total} paths; {sim.modelled.total_paths} residual route(s) require follow-on control."
+            f"Eliminates {eliminated} of {base_total} enumerated candidate paths, but BFS still "
+            f"finds a possible residual route ({sim.modelled.reachability_status})."
         )
 
     return {
@@ -252,6 +266,22 @@ def _verify_and_augment_cut_set(
         "baseline_paths": base_total,
         "paths_broken": eliminated,
         "residual_paths": sim.modelled.total_paths,
+        "residual_paths_semantics": "enumerated_candidate_count_not_total",
+        "reachability_status": sim.modelled.reachability_status,
+        "reachable_unbounded": sim.modelled.reachable_unbounded,
+        "reachable_within_max_hops": sim.modelled.reachable_within_max_hops,
+        "confirmed_reachable_unbounded": sim.modelled.confirmed_reachable_unbounded,
+        "reachability_verification_complete": sim.modelled.reachability_verification_complete,
+        "witness_path_edge_ids": sim.modelled.witness_path_edge_ids,
+        "conditional_witness_edge_ids": sim.modelled.conditional_witness_edge_ids,
+        "path_search_complete": sim.modelled.path_search_complete,
+        "path_search_truncation_reason": sim.modelled.path_search_truncation_reason,
+        "verification_status": (
+            "MODEL_VERIFIED_CUT" if model_cut_verified
+            else "PARTIAL_CUT" if sim.modelled.reachable_unbounded
+            else "INDETERMINATE"
+        ),
+        "minimum_cut_proven": False,
         "coverage_pct": coverage_pct,
         "critical_assets_unlinked": sim.delta_summary["critical_assets_unlinked"],
         "highest_score_reduction": sim.delta_summary["highest_score_reduction"],
@@ -262,7 +292,7 @@ def _verify_and_augment_cut_set(
     }
 
 
-def _solve_optimal_cut_sets(
+def _solve_candidate_cut_sets(
     *,
     nodes: list[GraphNode],
     edges: list[GraphEdge],
@@ -610,8 +640,8 @@ def analyze_assessment_intelligence(
             "recommended_transform": tx_dict,
         }
 
-    # 2. Optimal Minimum Cut-Sets (1-edge, 2-edge, greedy verified via real simulation)
-    cut_sets = _solve_optimal_cut_sets(
+    # 2. Bounded candidate cut sets, independently checked by reachability BFS.
+    cut_sets = _solve_candidate_cut_sets(
         nodes=nodes,
         edges=edges,
         constraints=analysis_constraints,
