@@ -196,7 +196,6 @@ def apply_sandbox_transforms(
             else:
                 cve = tx.cve_id.upper()
                 active_states = {"open", "unpatched", "vulnerable", "confirmed"}
-                patched_states = {"patched", "mitigated", "remediated", "fixed", "closed"}
 
                 for node in sandbox_nodes:
                     if tx.asset_id is not None and node.node_id != tx.asset_id:
@@ -232,7 +231,17 @@ def apply_sandbox_transforms(
                         remediated.append(cve)
                     node.metadata["remediated_cves"] = remediated
                     if prior_state in active_states and node.open_cve_count > 0:
-                        node.open_cve_count = max(0, node.open_cve_count - 1)
+                        count_map = node.metadata.get("vulnerability_finding_counts")
+                        count = (
+                            int(count_map.get(matching_key or cve, 1))
+                            if isinstance(count_map, dict)
+                            else 1
+                        )
+                        node.open_cve_count = max(0, node.open_cve_count - max(1, count))
+                        if isinstance(count_map, dict):
+                            updated_counts = dict(count_map)
+                            updated_counts[cve] = 0
+                            node.metadata["vulnerability_finding_counts"] = updated_counts
                     affected += 1
 
                 for edge in sandbox_edges:
