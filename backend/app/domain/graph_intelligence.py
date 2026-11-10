@@ -578,6 +578,7 @@ def analyze_assessment_intelligence(
     nx_graph, stats = build_networkx_graph(nodes, edges, as_of=constraints.as_of)
     search_out = find_attack_paths(nx_graph, analysis_constraints)
     baseline_paths = search_out.paths
+    baseline_reachability = verify_reachability(nx_graph, analysis_constraints)
 
     node_map = {n.key: n for n in nodes}
     edge_map: dict[str, GraphEdge] = {}
@@ -601,9 +602,18 @@ def analyze_assessment_intelligence(
         e_obj = edge_map.get(eid)
         if e_obj is None:
             continue
-        rem_paths = _paths_covered_without_edges(nodes, edges, analysis_constraints, {eid})
-        residual_count = len(rem_paths)
-        is_singleton = residual_count == 0 and len(baseline_paths) > 0
+        filtered_edges = [edge for edge in edges if edge.edge_id != eid]
+        residual_graph, _ = build_networkx_graph(
+            nodes, filtered_edges, as_of=analysis_constraints.as_of
+        )
+        residual_search = find_attack_paths(residual_graph, analysis_constraints)
+        residual_count = len(residual_search.paths)
+        residual_reachability = verify_reachability(residual_graph, analysis_constraints)
+        is_singleton = (
+            baseline_reachability.reachable_unbounded
+            and residual_reachability.complete
+            and not residual_reachability.reachable_unbounded
+        )
         if is_singleton:
             single_chokepoint_ids.append(eid)
 
@@ -635,6 +645,11 @@ def analyze_assessment_intelligence(
             "cumulative_risk_score": cum_risk,
             "max_path_score": max_risk,
             "residual_paths_if_cut": residual_count,
+            "residual_paths_semantics": "enumerated_candidate_count_not_total",
+            "residual_reachability": residual_reachability.status,
+            "residual_reachable": residual_reachability.reachable_unbounded,
+            "reachability_verification_complete": residual_reachability.complete,
+            "residual_witness_edge_ids": residual_reachability.witness_path_edge_ids,
             "is_single_point_chokepoint": is_singleton,
             "action_label": action_lbl,
             "recommended_transform": tx_dict,
@@ -743,10 +758,22 @@ def analyze_assessment_intelligence(
             "build_duration_ms": stats.build_duration_ms,
         },
         "summary": {
+            # Legacy count retained for clients; it is a count of returned candidates.
             "total_active_paths": len(baseline_paths),
+            "path_count_semantics": "returned_candidate_count_not_total",
+            "path_search_complete": not search_out.is_truncated,
+            "path_search_truncation_reason": search_out.truncation_reason,
+            "baseline_possible_reachability": baseline_reachability.reachable_unbounded,
+            "baseline_reachable_within_max_hops": baseline_reachability.reachable_within_max_hops,
+            "baseline_confirmed_reachability": baseline_reachability.confirmed_reachable_unbounded,
+            "reachability_verification_complete": baseline_reachability.complete,
+            "reachable_target_keys": baseline_reachability.reachable_target_keys,
             "reachable_crown_jewels": crown_jewels,
             "single_point_chokepoints_count": len(single_chokepoint_ids),
-            "min_cut_size": cut_sets[0]["cut_size"] if cut_sets else None,
+            # The heuristic candidate solver does not prove a global minimum cut.
+            "min_cut_size": None,
+            "candidate_cut_size": cut_sets[0]["cut_size"] if cut_sets else None,
+            "minimum_cut_proven": False,
             "inferred_dependent_paths": inferred_paths,
             "observed_only_paths": len(baseline_paths) - inferred_paths,
             "uncorroborated_acl_edges": uncorr_acl_count,
