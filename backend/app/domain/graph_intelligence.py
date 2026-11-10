@@ -20,7 +20,6 @@ from app.domain.models import (
 from app.domain.preconditions import evaluate_edge_preconditions, precondition_summary
 from app.domain.remediation_sim import (
     RemediationTransform,
-    apply_sandbox_transforms,
     simulate_remediation,
 )
 
