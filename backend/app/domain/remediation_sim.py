@@ -195,21 +195,43 @@ def apply_sandbox_transforms(
                 reason = "cve_id_required: a vulnerability must be identified before it can be patched."
             else:
                 cve = tx.cve_id.upper()
+                active_states = {"open", "unpatched", "vulnerable", "confirmed"}
+                patched_states = {"patched", "mitigated", "remediated", "fixed", "closed"}
+
                 for node in sandbox_nodes:
-                    node_states = node.metadata.get("vulnerability_status", {})
-                    matches_asset = tx.asset_id is not None and node.node_id == tx.asset_id
-                    matches_vulnerability = (
-                        isinstance(node_states, dict)
-                        and cve in {str(item).upper() for item in node_states}
-                    )
-                    if not (matches_asset or (tx.asset_id is None and matches_vulnerability)):
+                    if tx.asset_id is not None and node.node_id != tx.asset_id:
                         continue
-                    states = node.metadata.setdefault("vulnerability_status", {})
+                    node_states = node.metadata.get("vulnerability_status")
+                    state_map = (
+                        node_states if isinstance(node_states, dict) else {}
+                    )
+                    matching_key = next(
+                        (key for key in state_map if str(key).upper() == cve),
+                        None,
+                    )
+                    remediated_values = node.metadata.get("remediated_cves")
+                    remediated_list = (
+                        remediated_values if isinstance(remediated_values, list) else []
+                    )
+                    already_recorded = any(
+                        str(value).upper() == cve for value in remediated_list
+                    )
+                    if matching_key is None and not already_recorded:
+                        continue
+
+                    states = dict(state_map)
+                    prior_state = (
+                        str(states.get(matching_key)).lower()
+                        if matching_key is not None
+                        else "patched"
+                    )
                     states[cve] = "patched"
-                    remediated = node.metadata.setdefault("remediated_cves", [])
-                    if cve not in remediated:
+                    node.metadata["vulnerability_status"] = states
+                    remediated = list(remediated_list)
+                    if not already_recorded:
                         remediated.append(cve)
-                    if node.open_cve_count > 0:
+                    node.metadata["remediated_cves"] = remediated
+                    if prior_state in active_states and node.open_cve_count > 0:
                         node.open_cve_count = max(0, node.open_cve_count - 1)
                     affected += 1
 
@@ -219,16 +241,26 @@ def apply_sandbox_transforms(
                         continue
                     if tx.asset_id and tx.asset_id not in (edge.source_id, edge.target_id):
                         continue
-                    states = edge.edge_metadata.setdefault("vulnerability_status", {})
+                    raw_states = edge.edge_metadata.get("vulnerability_status")
+                    state_map = raw_states if isinstance(raw_states, dict) else {}
+                    states = dict(state_map)
                     states[cve] = "patched"
-                    remediated = edge.edge_metadata.setdefault("remediated_cves", [])
-                    if cve not in remediated:
+                    edge.edge_metadata["vulnerability_status"] = states
+                    raw_remediated = edge.edge_metadata.get("remediated_cves")
+                    remediated = (
+                        list(raw_remediated) if isinstance(raw_remediated, list) else []
+                    )
+                    if not any(str(value).upper() == cve for value in remediated):
                         remediated.append(cve)
+                    edge.edge_metadata["remediated_cves"] = remediated
                     affected += 1
 
                 if affected == 0:
                     status = "not_applied"
-                    reason = "no_matching_vulnerability_reference: no node or transition referenced the specified CVE and asset scope."
+                    reason = (
+                        "no_matching_vulnerability_reference: the CVE was not present "
+                        "in the scoped asset findings or a matching requires_cve relationship."
+                    )
 
         applied_log.append(
             {
