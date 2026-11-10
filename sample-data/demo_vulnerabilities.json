@@ -1,0 +1,38 @@
+{
+  "findings": [
+    {
+      "asset_key": "host:10.10.2.20",
+      "port": 8080,
+      "protocol": "tcp",
+      "cve_id": "CVE-2023-28709",
+      "cvss_version": "3.1",
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "cvss_score": 7.5,
+      "severity": "high",
+      "affected_component": "Apache Tomcat 9.0.65",
+      "status": "open",
+      "scanner_name": "synthetic_vuln_scanner",
+      "scanner_context": "app-core-01:8080/tcp",
+      "observed_at": "2026-11-10T10:15:00+00:00",
+      "confidence": 0.85,
+      "evidence": {"banner_matched": "Apache Tomcat 9.0.65"}
+    },
+    {
+      "asset_key": "host:10.10.4.50",
+      "port": 5432,
+      "protocol": "tcp",
+      "cve_id": "CVE-2024-10979",
+      "cvss_version": "3.1",
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H",
+      "cvss_score": 8.8,
+      "severity": "high",
+      "affected_component": "PostgreSQL 15.4",
+      "status": "open",
+      "scanner_name": "synthetic_vuln_scanner",
+      "scanner_context": "db-crown-01:5432/tcp",
+      "observed_at": "2026-11-10T10:15:00+00:00",
+      "confidence": 0.88,
+      "evidence": {"banner_matched": "PostgreSQL 15.4"}
+    }
+  ]
+}

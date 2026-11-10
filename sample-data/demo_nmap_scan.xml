@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sV -Pn --script=http-title,banner 10.10.0.0/16" start="1794300000" startstr="Tue Nov 10 10:00:00 2026" version="7.95">
+  <host starttime="1794300001" endtime="1794300010">
+    <status state="up" reason="syn-ack"/>
+    <address addr="10.10.1.10" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="web-dmz-01.lab.sentinelgraph.invalid" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="80">
+        <state state="open" reason="syn-ack"/>
+        <service name="http" product="nginx" version="1.24.0" conf="9"/>
+        <script id="http-title" output="Acme Portal Gateway"/>
+      </port>
+      <port protocol="tcp" portid="443">
+        <state state="open" reason="syn-ack"/>
+        <service name="https" product="nginx" version="1.24.0" conf="9"/>
+      </port>
+    </ports>
+  </host>
+  <host starttime="1794300011" endtime="1794300020">
+    <status state="up" reason="syn-ack"/>
+    <address addr="10.10.2.20" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="app-core-01.lab.sentinelgraph.invalid" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="8080">
+        <state state="open" reason="syn-ack"/>
+        <service name="http-proxy" product="Apache Tomcat" version="9.0.65" conf="8"/>
+        <script id="banner" output="Apache-Coyote/1.1"/>
+      </port>
+    </ports>
+  </host>
+  <host starttime="1794300021" endtime="1794300030">
+    <status state="up" reason="syn-ack"/>
+    <address addr="10.10.3.10" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="dir-dc-01.lab.sentinelgraph.invalid" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="389">
+        <state state="open" reason="syn-ack"/>
+        <service name="ldap" product="OpenLDAP" version="2.6" conf="8"/>
+      </port>
+      <port protocol="tcp" portid="636">
+        <state state="open" reason="syn-ack"/>
+        <service name="ldapssl" product="OpenLDAP" version="2.6" conf="8"/>
+      </port>
+    </ports>
+  </host>
+  <host starttime="1794300031" endtime="1794300040">
+    <status state="up" reason="syn-ack"/>
+    <address addr="10.10.4.50" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="db-crown-01.lab.sentinelgraph.invalid" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="5432">
+        <state state="open" reason="syn-ack"/>
+        <service name="postgresql" product="PostgreSQL DB" version="15.4" conf="9"/>
+      </port>
+    </ports>
+  </host>
+  <host starttime="1794300041" endtime="1794300050">
+    <status state="up" reason="syn-ack"/>
+    <address addr="10.10.1.25" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="bastion-ops-01.lab.sentinelgraph.invalid" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="22">
+        <state state="open" reason="syn-ack"/>
+        <service name="ssh" product="OpenSSH" version="9.2p1" conf="9"/>
+      </port>
+    </ports>
+  </host>
+  <runstats>
+    <finished time="1794300060" timestr="Tue Nov 10 10:01:00 2026" elapsed="60.0"/>
+  </runstats>
+</nmaprun>

@@ -1,0 +1,73 @@
+# Reference Production Security Context & Network Policy (Page 42 / 92)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sentinelgraph-api-egress-restrict
+  namespace: sentinelgraph
+spec:
+  podSelector:
+    matchLabels:
+      app: sentinelgraph-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: sentinelgraph-ingress
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sentinelgraph-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sentinelgraph-redis
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentinelgraph-worker-template
+  namespace: sentinelgraph
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: sentinelgraph-worker
+  template:
+    metadata:
+      labels:
+        app: sentinelgraph-worker
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: sentinelgraph-worker:1.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"

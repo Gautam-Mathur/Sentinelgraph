@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+playwright-report/
+test-results/
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Temporary upload storage & database dumps
+/tmp/sentinelgraph-uploads/
+backend/uploads/
+backups/
+*.dump
+*.dump.sha256
+*.sqlite3
+*.db
+
+# Coverage, logs & OS metadata
+.coverage
+htmlcov/
+*.log
+.DS_Store
+Thumbs.db

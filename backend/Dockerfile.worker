@@ -1,0 +1,22 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r sentinel && useradd -r -g sentinel -d /app -s /sbin/nologin sentinel
+
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY . /app
+RUN mkdir -p /tmp/sentinelgraph-uploads && chown -R sentinel:sentinel /app /tmp/sentinelgraph-uploads
+
+USER sentinel
+
+CMD ["python", "-m", "app.workers.run_worker"]

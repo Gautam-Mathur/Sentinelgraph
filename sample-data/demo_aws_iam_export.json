@@ -1,0 +1,63 @@
+{
+  "account_id": "111122223333",
+  "observed_at": "2026-11-10T10:30:00+00:00",
+  "security_groups": [
+    {
+      "group_id": "sg-demo-edge-01",
+      "group_name": "edge-api-public-sg",
+      "ingress_rules": [
+        {
+          "cidr_ip": "0.0.0.0/0",
+          "from_port": 443,
+          "to_port": 443,
+          "protocol": "tcp"
+        }
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "group_name": "CloudPlatformAdmins",
+      "arn": "arn:aws:iam::111122223333:group/CloudPlatformAdmins",
+      "is_admin": true
+    }
+  ],
+  "roles": [
+    {
+      "role_name": "EdgeWorkloadRole",
+      "arn": "arn:aws:iam::111122223333:role/EdgeWorkloadRole",
+      "attached_policies": ["arn:aws:iam::aws:policy/ReadOnlyAccess", "SecretsManagerCrownAccess"],
+      "is_privileged": true,
+      "can_administer_assets": ["aws:rds-crown-demo-01"]
+    }
+  ],
+  "users": [
+    {
+      "user_name": "platform_breakglass",
+      "arn": "arn:aws:iam::111122223333:user/platform_breakglass",
+      "is_admin": true,
+      "groups": ["CloudPlatformAdmins"]
+    }
+  ],
+  "resources": [
+    {
+      "resource_id": "i-demoedge01",
+      "name": "edge-api-gw-aws",
+      "asset_type": "cloud_resource",
+      "environment": "prod",
+      "criticality": "high",
+      "ip_address": "10.10.1.90",
+      "security_group_ids": ["sg-demo-edge-01"],
+      "role_arn": "arn:aws:iam::111122223333:role/EdgeWorkloadRole"
+    },
+    {
+      "resource_id": "rds-crown-demo-01",
+      "name": "billing-ledger-rds",
+      "asset_type": "database",
+      "environment": "prod",
+      "criticality": "critical",
+      "ip_address": "10.10.4.90",
+      "is_crown_jewel": true
+    }
+  ]
+}

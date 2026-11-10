@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nmaprun scanner="nmap" args="nmap -sV -Pn 10.10.0.0/16" start="1794386400" startstr="Wed Nov 11 10:00:00 2026" version="7.95">
+  <host starttime="1794386401" endtime="1794386410">
+    <status state="up" reason="syn-ack"/>
+    <address addr="10.10.1.10" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="web-dmz-01.lab.sentinelgraph.invalid" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="443">
+        <state state="open" reason="syn-ack"/>
+        <service name="https" product="nginx" version="1.26.2" conf="9"/>
+      </port>
+    </ports>
+  </host>
+  <host starttime="1794386411" endtime="1794386420">
+    <status state="up" reason="syn-ack"/>
+    <address addr="10.10.4.50" addrtype="ipv4"/>
+    <hostnames>
+      <hostname name="db-crown-01.lab.sentinelgraph.invalid" type="PTR"/>
+    </hostnames>
+    <ports>
+      <port protocol="tcp" portid="5432">
+        <state state="open" reason="syn-ack"/>
+        <service name="postgresql" product="PostgreSQL DB" version="15.8" conf="9"/>
+      </port>
+    </ports>
+  </host>
+  <runstats>
+    <finished time="1794386430" timestr="Wed Nov 11 10:00:30 2026" elapsed="30.0"/>
+  </runstats>
+</nmaprun>

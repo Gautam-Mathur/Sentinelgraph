@@ -1,0 +1,35 @@
+<?xml version="1.0" ?>
+<NessusClientData_v2>
+  <Report name="Synthetic Enterprise Nessus Validation">
+    <ReportHost name="10.10.2.20">
+      <HostProperties>
+        <tag name="host-ip">10.10.2.20</tag>
+        <tag name="host-fqdn">app-core-01.lab.sentinelgraph.invalid</tag>
+        <tag name="operating-system">Linux Kernel 6.1</tag>
+      </HostProperties>
+      <ReportItem port="8080" svc_name="www" protocol="tcp" severity="3" pluginID="174201" pluginName="Apache Tomcat 9.x Connector Header Processing Vulnerability">
+        <cve>CVE-2023-28709</cve>
+        <cvss3_base_score>7.5</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N</cvss3_vector>
+        <description>Synthetic Nessus observation on Apache Tomcat 9.0.65 HTTP connector.</description>
+        <solution>Upgrade Apache Tomcat to 9.0.73 or later.</solution>
+        <plugin_output>Observed banner: Apache-Coyote/1.1 (Tomcat 9.0.65)</plugin_output>
+      </ReportItem>
+    </ReportHost>
+    <ReportHost name="10.10.4.50">
+      <HostProperties>
+        <tag name="host-ip">10.10.4.50</tag>
+        <tag name="host-fqdn">db-crown-01.lab.sentinelgraph.invalid</tag>
+        <tag name="operating-system">Linux Kernel 6.1</tag>
+      </HostProperties>
+      <ReportItem port="5432" svc_name="postgresql" protocol="tcp" severity="4" pluginID="209112" pluginName="PostgreSQL 15.x Environment Variable Injection Risk">
+        <cve>CVE-2024-10979</cve>
+        <cvss3_base_score>8.8</cvss3_base_score>
+        <cvss3_vector>CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:H/I:H/A:H</cvss3_vector>
+        <description>Synthetic Nessus finding for PostgreSQL 15.4 instance.</description>
+        <solution>Apply PostgreSQL 15.9+ security update.</solution>
+        <plugin_output>PostgreSQL wire banner 15.4 detected on 5432/tcp</plugin_output>
+      </ReportItem>
+    </ReportHost>
+  </Report>
+</NessusClientData_v2>

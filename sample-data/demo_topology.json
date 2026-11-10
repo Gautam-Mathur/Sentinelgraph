@@ -1,0 +1,46 @@
+{
+  "subnets": [
+    {"name": "DMZ-Web", "cidr": "10.10.1.0/24", "vlan_id": 10, "zone": "dmz"},
+    {"name": "App-Tier", "cidr": "10.10.2.0/24", "vlan_id": 20, "zone": "internal"},
+    {"name": "Identity-Core", "cidr": "10.10.3.0/24", "vlan_id": 30, "zone": "restricted"},
+    {"name": "Crown-Data", "cidr": "10.10.4.0/24", "vlan_id": 40, "zone": "restricted"}
+  ],
+  "firewall_rules": [
+    {
+      "rule_id": "ACL-DMZ-TO-APP-8080",
+      "action": "allow",
+      "direction": "lateral",
+      "source_asset_key": "host:10.10.1.10",
+      "target_asset_key": "host:10.10.2.20",
+      "protocol": "tcp",
+      "ports": [8080],
+      "source_product": "lab_firewall_export",
+      "observed_at": "2026-11-10T10:05:00+00:00",
+      "confidence": 0.92
+    },
+    {
+      "rule_id": "ACL-BASTION-TO-APP-8080",
+      "action": "allow",
+      "direction": "lateral",
+      "source_asset_key": "host:10.10.1.25",
+      "target_asset_key": "host:10.10.2.20",
+      "protocol": "tcp",
+      "ports": [8080],
+      "source_product": "lab_firewall_export",
+      "observed_at": "2026-11-10T10:05:00+00:00",
+      "confidence": 0.88
+    },
+    {
+      "rule_id": "ACL-DENY-DMZ-DIRECT-DB",
+      "action": "deny",
+      "direction": "lateral",
+      "source_asset_key": "host:10.10.1.10",
+      "target_asset_key": "host:10.10.4.50",
+      "protocol": "tcp",
+      "ports": [5432],
+      "source_product": "lab_firewall_export",
+      "observed_at": "2026-11-10T10:05:00+00:00",
+      "confidence": 0.95
+    }
+  ]
+}

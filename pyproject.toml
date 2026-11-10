@@ -1,0 +1,47 @@
+[project]
+name = "sentinelgraph"
+version = "1.0.0"
+description = "Enterprise Attack-Path Intelligence Engine (MVP)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["backend", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "S", "SIM"]
+ignore = ["S101", "B008", "E501", "N817", "S105", "S106", "S108", "S110"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S108"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+mypy_path = "backend"
+
+[[tool.mypy.overrides]]
+module = [
+    "defusedxml.*",
+    "networkx.*",
+    "rq.*",
+    "magic.*",
+    "opentelemetry.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "backend"]
+addopts = "-q --tb=short"
+markers = [
+    "unit: Pure unit tests",
+    "integration: Database/Redis/API integration tests",
+    "security: Security and tenant isolation tests",
+    "performance: Scale and latency benchmarks",
+    "e2e: End-to-end Playwright browser tests",
+]

@@ -1,0 +1,126 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: sentinelgraph
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres_dev_pw}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sentinelgraph"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_ADMIN_PASSWORD:-postgres_dev_pw}@postgres:5432/sentinelgraph
+      DATABASE_ADMIN_URL: postgresql+psycopg://postgres:${POSTGRES_ADMIN_PASSWORD:-postgres_dev_pw}@postgres:5432/sentinelgraph
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production-32-bytes-minimum-key}
+    volumes:
+      - ./sample-data:/app/sample-data:ro
+    command: >
+      sh -c "alembic upgrade head && python -m app.seed"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://sentinelgraph_app:sentinelgraph_dev_pw@postgres:5432/sentinelgraph
+      DATABASE_ADMIN_URL: postgresql+psycopg://postgres:${POSTGRES_ADMIN_PASSWORD:-postgres_dev_pw}@postgres:5432/sentinelgraph
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production-32-bytes-minimum-key}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:-dev-only-fernet-key-override-in-production-00=}
+      ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    tmpfs:
+      - /tmp/sentinelgraph-uploads:rw,noexec,nosuid,size=128m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/v1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://sentinelgraph_app:sentinelgraph_dev_pw@postgres:5432/sentinelgraph
+      DATABASE_ADMIN_URL: postgresql+psycopg://postgres:${POSTGRES_ADMIN_PASSWORD:-postgres_dev_pw}@postgres:5432/sentinelgraph
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:-dev-only-change-in-production-32-bytes-minimum-key}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:-dev-only-fernet-key-override-in-production-00=}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    tmpfs:
+      - /tmp/sentinelgraph-uploads:rw,noexec,nosuid,size=128m
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "5173:8080"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid
+      - /var/run:rw,noexec,nosuid
+      - /tmp:rw,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

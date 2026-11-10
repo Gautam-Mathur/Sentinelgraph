@@ -1,0 +1,66 @@
+{
+  "users": [
+    {
+      "ObjectIdentifier": "S-1-5-21-DEMO-1001",
+      "Properties": {
+        "name": "svc_deploy@sentinelgraph.demo.local",
+        "samaccountname": "svc_deploy",
+        "enabled": true,
+        "hasspn": true,
+        "admincount": false,
+        "domain": "sentinelgraph.demo.local"
+      }
+    },
+    {
+      "ObjectIdentifier": "S-1-5-21-DEMO-1002",
+      "Properties": {
+        "name": "tier0_ops@sentinelgraph.demo.local",
+        "samaccountname": "tier0_ops",
+        "enabled": true,
+        "admincount": true,
+        "highvalue": true,
+        "domain": "sentinelgraph.demo.local"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "ObjectIdentifier": "S-1-5-21-DEMO-512",
+      "Properties": {
+        "name": "DOMAIN ADMINS@SENTINELGRAPH.DEMO.LOCAL",
+        "highvalue": true,
+        "admincount": true
+      },
+      "Members": [
+        {
+          "ObjectIdentifier": "S-1-5-21-DEMO-1002",
+          "ObjectType": "User"
+        }
+      ],
+      "Aces": []
+    }
+  ],
+  "computers": [
+    {
+      "ObjectIdentifier": "S-1-5-21-DEMO-COMP-10",
+      "Properties": {
+        "name": "dir-dc-01.sentinelgraph.demo.local",
+        "ip_addresses": ["10.10.3.10"],
+        "operatingsystem": "Windows Server 2022"
+      },
+      "LocalAdmins": [
+        {
+          "ObjectIdentifier": "S-1-5-21-DEMO-512",
+          "ObjectType": "Group"
+        }
+      ],
+      "Aces": [
+        {
+          "PrincipalSID": "S-1-5-21-DEMO-1001",
+          "PrincipalType": "User",
+          "RightName": "GenericWrite"
+        }
+      ]
+    }
+  ]
+}

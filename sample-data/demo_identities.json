@@ -1,0 +1,76 @@
+{
+  "source_product": "synthetic_ad_export",
+  "identities": [
+    {
+      "external_id": "svc-etl-legacy",
+      "provider": "active_directory",
+      "identity_type": "service_account",
+      "display_name": "svc-etl-legacy (Legacy ETL Service)",
+      "principal_name": "svc-etl-legacy@lab.sentinelgraph.invalid",
+      "enabled": true,
+      "privilege_level": "privileged",
+      "privilege_indicators": ["unconstrained_delegation_legacy", "db_admin_member"],
+      "auth_metadata": {"mfa_enforced": false, "kerberos_preauth": true},
+      "confidence": 0.93,
+      "observed_at": "2026-11-10T10:10:00+00:00"
+    },
+    {
+      "external_id": "svc-webapp",
+      "provider": "active_directory",
+      "identity_type": "service_account",
+      "display_name": "svc-webapp (DMZ Proxy Identity)",
+      "principal_name": "svc-webapp@lab.sentinelgraph.invalid",
+      "enabled": true,
+      "privilege_level": "standard",
+      "privilege_indicators": [],
+      "auth_metadata": {"mfa_enforced": false},
+      "confidence": 0.9,
+      "observed_at": "2026-11-10T10:10:00+00:00"
+    },
+    {
+      "external_id": "alice.ops",
+      "provider": "active_directory",
+      "identity_type": "human_user",
+      "display_name": "Alice Ops (Platform SRE)",
+      "principal_name": "alice.ops@lab.sentinelgraph.invalid",
+      "enabled": true,
+      "privilege_level": "elevated",
+      "privilege_indicators": ["bastion_ssh_operator"],
+      "auth_metadata": {"mfa_enforced": true},
+      "confidence": 0.95,
+      "observed_at": "2026-11-10T10:10:00+00:00"
+    }
+  ],
+  "groups": [
+    {
+      "external_id": "grp-db-admins",
+      "provider": "active_directory",
+      "display_name": "Crown DB Administrators",
+      "group_type": "admin_group",
+      "privilege_indicators": ["postgresql_superuser", "backup_operator"],
+      "enabled": true,
+      "confidence": 0.95,
+      "observed_at": "2026-11-10T10:10:00+00:00"
+    },
+    {
+      "external_id": "grp-domain-admins",
+      "provider": "active_directory",
+      "display_name": "Domain Admins",
+      "group_type": "directory_role",
+      "privilege_indicators": ["domain_admin"],
+      "enabled": true,
+      "confidence": 0.98,
+      "observed_at": "2026-11-10T10:10:00+00:00"
+    }
+  ],
+  "memberships": [
+    {
+      "identity_external_id": "svc-etl-legacy",
+      "group_external_id": "grp-db-admins",
+      "provider": "active_directory",
+      "valid_from": "2026-01-01T00:00:00+00:00",
+      "confidence": 0.94,
+      "source_record_id": "AD-MEM-LEGACY-DBADMIN-01"
+    }
+  ]
+}

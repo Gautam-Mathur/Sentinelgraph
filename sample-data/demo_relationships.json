@@ -1,0 +1,56 @@
+{
+  "relationships": [
+    {
+      "source_kind": "asset",
+      "source_key": "host:10.10.2.20",
+      "target_kind": "identity",
+      "target_key": "svc-etl-legacy",
+      "relation_type": "HAS_ROLE",
+      "fact_kind": "observed_fact",
+      "confidence": 0.9,
+      "valid_from": "2026-11-10T10:20:00+00:00",
+      "source_product": "systemd_unit_inventory",
+      "source_record_id": "SVC-RUNAS-ETL-01",
+      "metadata": {"service_unit": "tomcat-etl-bridge.service", "requires_cve": "CVE-2023-28709"}
+    },
+    {
+      "source_kind": "group",
+      "source_key": "grp-db-admins",
+      "target_kind": "asset",
+      "target_key": "host:10.10.4.50",
+      "relation_type": "CAN_ADMINISTER",
+      "fact_kind": "observed_fact",
+      "confidence": 0.95,
+      "valid_from": "2026-11-10T10:20:00+00:00",
+      "source_product": "pg_hba_role_audit",
+      "source_record_id": "DB-ROLE-GRANT-01",
+      "metadata": {"privilege": "SUPERUSER"}
+    },
+    {
+      "source_kind": "identity",
+      "source_key": "svc-etl-legacy",
+      "target_kind": "asset",
+      "target_key": "host:10.10.3.10",
+      "relation_type": "TRUSTS",
+      "fact_kind": "inferred_relationship",
+      "confidence": 0.62,
+      "valid_from": "2026-11-10T10:20:00+00:00",
+      "source_product": "kerberos_delegation_heuristic",
+      "source_record_id": "INF-DELEG-DC-01",
+      "metadata": {"note": "Inferred legacy Kerberos delegation trust requiring analyst review"}
+    },
+    {
+      "source_kind": "asset",
+      "source_key": "host:10.10.3.10",
+      "target_kind": "asset",
+      "target_key": "host:10.10.4.50",
+      "relation_type": "CAN_ADMINISTER",
+      "fact_kind": "observed_fact",
+      "confidence": 0.86,
+      "valid_from": "2026-11-10T10:20:00+00:00",
+      "source_product": "directory_gpo_audit",
+      "source_record_id": "GPO-DC-TO-DB-01",
+      "metadata": {"mechanism": "Directory LDAP bind & server admin GPO"}
+    }
+  ]
+}
