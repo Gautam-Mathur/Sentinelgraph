@@ -310,3 +310,38 @@ def test_cve_precondition_uses_endpoint_finding_state_without_edge_duplication()
     nodes[0].metadata["vulnerability_status"]["CVE-2024-24680"] = "patched"
     graph_patched, _ = build_networkx_graph(nodes, [edge])
     assert find_attack_paths(graph_patched, strict).paths == []
+
+
+
+def test_explicit_admin_precondition_does_not_bypass_admin_state() -> None:
+    now = datetime.now(UTC)
+    nodes = [
+        GraphNode(NodeKind.IDENTITY, "operator", "operator"),
+        GraphNode(NodeKind.ASSET, "server", "server", criticality="critical"),
+    ]
+    edge = GraphEdge(
+        "admin-gate",
+        NodeKind.IDENTITY,
+        "operator",
+        NodeKind.ASSET,
+        "server",
+        RelationType.CAN_ADMINISTER,
+        FactKind.OBSERVED_FACT,
+        0.95,
+        now,
+        edge_metadata={
+            "preconditions": [{"kind": "mfa_gate", "status": True}],
+        },
+    )
+    graph, _ = build_networkx_graph(nodes, [edge])
+    constraints = PathSearchConstraints(
+        start_node_keys=["identity:operator"],
+        target_node_keys=["asset:server"],
+        max_hops=1,
+        allow_unknown_preconditions=False,
+    )
+    # MFA is satisfied, but whether the admin capability is enabled remains unknown.
+    assert find_attack_paths(graph, constraints).paths == []
+    edge.edge_metadata["admin_enabled"] = True
+    graph_enabled, _ = build_networkx_graph(nodes, [edge])
+    assert len(find_attack_paths(graph_enabled, constraints).paths) == 1
