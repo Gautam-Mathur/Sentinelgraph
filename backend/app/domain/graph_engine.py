@@ -370,7 +370,7 @@ def _bfs_reachability_witness(
 
     conditional_ids = [
         edge_id
-        for edge_id in edge_path
+        for idx, edge_id in enumerate(edge_path)
         if any(
             outcome["status"] == "unknown"
             for outcome in evaluate_edge_preconditions(
