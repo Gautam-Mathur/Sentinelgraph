@@ -336,6 +336,7 @@ def evaluate_edge_preconditions(
         ):
             # Evaluate every supplied routing/ACL fact, even when an explicit
             # precondition also exists, so contradictory evidence cannot be hidden.
+            outcomes.extend(_network_conditions(edge))
     elif edge.relation_type == RelationType.CAN_ADMINISTER:
         outcomes.extend(_admin_conditions(edge))
     elif edge.relation_type == RelationType.MEMBER_OF:
