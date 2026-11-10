@@ -189,7 +189,14 @@ def _vulnerability_condition(edge: GraphEdge) -> dict[str, Any] | None:
         return None
     cve = required_cve.upper()
     states = edge.edge_metadata.get("vulnerability_status")
-    state = states.get(cve) if isinstance(states, dict) else None
+    state = (
+        next(
+            (value for key, value in states.items() if str(key).upper() == cve),
+            None,
+        )
+        if isinstance(states, dict)
+        else None
+    )
     remediated = edge.edge_metadata.get("remediated_cves", [])
     if isinstance(remediated, list) and cve in {str(value).upper() for value in remediated}:
         state = "patched"
@@ -217,8 +224,9 @@ def _vulnerability_condition(edge: GraphEdge) -> dict[str, Any] | None:
 def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
     """Evaluate typed transition prerequisites with true/false/unknown outcomes.
 
-    Explicit edge_metadata['preconditions'] entries take precedence. Each entry may
-    declare a boolean 'status', or a metadata 'field' and an 'expected' value.
+    Explicit edge_metadata['preconditions'] entries add typed requirements. Network
+    and ACL metadata, when present, are still evaluated conjunctively. A mandatory
+    requires_cve condition is always evaluated independently of custom requirements.
     Missing facts evaluate to unknown; they are never silently treated as true.
     """
     explicit = edge.edge_metadata.get("preconditions")
@@ -276,6 +284,11 @@ def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
                     evidence_ref=spec.get("evidence_ref"),
                 )
             )
+        if (
+            edge.relation_type in (RelationType.CONNECTS_TO, RelationType.EXPOSES)
+            and ("network_reachable" in edge.edge_metadata or "acl_action" in edge.edge_metadata)
+        ):
+            outcomes.extend(_network_conditions(edge))
         cve_condition = _vulnerability_condition(edge)
         if cve_condition is not None:
             outcomes.append(cve_condition)
