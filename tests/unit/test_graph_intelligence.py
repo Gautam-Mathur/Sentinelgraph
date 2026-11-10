@@ -114,12 +114,14 @@ def test_single_chokepoint_vs_parallel_branch_cut_sets() -> None:
     intel = analyze_assessment_intelligence(nodes=nodes, edges=edges, constraints=constraints)
 
     assert intel["summary"]["total_active_paths"] == 2
-    assert intel["summary"]["min_cut_size"] == 1
+    assert intel["summary"]["min_cut_size"] is None\n    assert intel["summary"]["candidate_cut_size"] == 1\n    assert intel["summary"]["minimum_cut_proven"] is False
     assert intel["summary"]["single_point_chokepoints_count"] == 1
 
     blast = intel["edge_blast_radius"]
     assert blast["e_bridge"]["is_single_point_chokepoint"] is True
     assert blast["e_bridge"]["residual_paths_if_cut"] == 0
+    assert blast["e_bridge"]["residual_reachable"] is False
+    assert blast["e_bridge"]["reachability_verification_complete"] is True
     assert blast["e_bridge"]["recommended_transform"]["transform_type"] == "segment_network"
 
     # Parallel branch edges alone leave the alternate route alive
@@ -131,6 +133,9 @@ def test_single_chokepoint_vs_parallel_branch_cut_sets() -> None:
     top_cut = intel["cut_sets"][0]
     assert top_cut["cut_size"] == 1
     assert top_cut["residual_paths"] == 0
+    assert top_cut["verification_status"] == "MODEL_VERIFIED_CUT"
+    assert top_cut["minimum_cut_proven"] is False
+    assert top_cut["reachable_unbounded"] is False
     assert top_cut["edge_ids"] == ["e_bridge"]
 
 
@@ -158,11 +163,13 @@ def test_disjoint_parallel_branches_require_two_edge_cut_set() -> None:
 
     assert intel["summary"]["total_active_paths"] == 2
     assert intel["summary"]["single_point_chokepoints_count"] == 0
-    assert intel["summary"]["min_cut_size"] == 2
+    assert intel["summary"]["min_cut_size"] is None\n    assert intel["summary"]["candidate_cut_size"] == 2\n    assert intel["summary"]["minimum_cut_proven"] is False
 
     top_cut = intel["cut_sets"][0]
     assert top_cut["cut_size"] == 2
     assert top_cut["residual_paths"] == 0
+    assert top_cut["verification_status"] == "MODEL_VERIFIED_CUT"
+    assert top_cut["minimum_cut_proven"] is False
     assert top_cut["paths_broken"] == 2
 
     # Confirm returned cut transforms eliminate all paths under real sandbox simulation
