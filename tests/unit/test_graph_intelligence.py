@@ -119,6 +119,17 @@ def test_single_chokepoint_vs_parallel_branch_cut_sets() -> None:
     assert intel["summary"]["minimum_cut_proven"] is False
     assert intel["summary"]["single_point_chokepoints_count"] == 1
 
+    # A deliberately tiny candidate budget must not change BFS chokepoint truth.
+    capped_intel = analyze_assessment_intelligence(
+        nodes=nodes,
+        edges=edges,
+        constraints=replace(constraints, max_candidates=1),
+    )
+    assert capped_intel["summary"]["path_search_complete"] is False
+    assert capped_intel["summary"]["baseline_possible_reachability"] is True
+    assert capped_intel["summary"]["single_point_chokepoints_count"] == 1
+    assert capped_intel["edge_blast_radius"]["e_bridge"]["residual_reachable"] is False
+
     blast = intel["edge_blast_radius"]
     assert blast["e_bridge"]["is_single_point_chokepoint"] is True
     assert blast["e_bridge"]["residual_paths_if_cut"] == 0
@@ -281,6 +292,20 @@ def test_single_path_intelligence_causal_chain_bypasses_and_stale_notice() -> No
     assert p_intel["why_exists"]["structural_context"]["same_pair_total_paths"] == 2
     assert p_intel["why_exists"]["structural_context"]["parallel_bypass_paths_count"] == 1
     assert p_intel["why_exists"]["structural_context"]["chokepoint_step_orders"] == [1]
+
+    capped_path_intel = analyze_single_path_intelligence(
+        nodes=nodes,
+        edges=edges,
+        constraints=replace(constraints, max_candidates=1),
+        path_steps=path_steps,
+        start_key="asset:web",
+        target_key="asset:db",
+        priority_score=84.5,
+    )
+    pair_context = capped_path_intel["why_exists"]["structural_context"]
+    assert pair_context["same_pair_path_search_complete"] is False
+    assert pair_context["same_pair_reachable"] is True
+    assert pair_context["chokepoint_step_orders"] == [1]
 
     categories = {a["category"] for a in p_intel["assumptions_register"]}
     assert "plausibility_invariant" in categories
