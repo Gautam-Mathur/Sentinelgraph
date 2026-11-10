@@ -303,7 +303,47 @@ def _solve_candidate_cut_sets(
     max_sets: int = 5,
 ) -> list[dict[str, Any]]:
     if not baseline_paths:
-        return []
+        # Candidate enumeration can time out or hit max_candidates before yielding
+        # a single path. Do not suppress remediation suggestions when independent
+        # BFS still proves that a possible route exists.
+        baseline_graph, _ = build_networkx_graph(nodes, edges, as_of=constraints.as_of)
+        baseline_reachability = verify_reachability(baseline_graph, constraints)
+        if not baseline_reachability.reachable_unbounded:
+            return []
+        witness_ids = [
+            edge_id for edge_id in baseline_reachability.witness_path_edge_ids
+            if edge_id in edge_map
+        ]
+        candidate_sets = [[edge_id] for edge_id in witness_ids[:max_sets]]
+        verified_cuts: list[dict[str, Any]] = []
+        for raw_set in candidate_sets:
+            verified = _verify_and_augment_cut_set(
+                nodes=nodes,
+                edges=edges,
+                constraints=constraints,
+                initial_edge_ids=raw_set,
+                edge_map=edge_map,
+                node_map=node_map,
+                baseline_paths=[],
+            )
+            verified_cuts.append(verified)
+        verified_cuts.sort(
+            key=lambda cut: (
+                cut["reachable_unbounded"],
+                cut["cut_size"],
+                cut["effort_score"],
+                cut["cut_key"],
+            )
+        )
+        results: list[dict[str, Any]] = []
+        for idx, cut in enumerate(verified_cuts[:max_sets], start=1):
+            cut_out = {key: value for key, value in cut.items() if key != "cut_key"}
+            cut_out["id"] = f"cut-{idx}"
+            cut_out["baseline_reachability_witness"] = baseline_reachability.witness_path_edge_ids
+            cut_out["baseline_reachability_verification_complete"] = baseline_reachability.complete
+            cut_out["path_search_complete"] = False
+            results.append(cut_out)
+        return results
 
     num_paths = len(baseline_paths)
     all_mask = (1 << num_paths) - 1
