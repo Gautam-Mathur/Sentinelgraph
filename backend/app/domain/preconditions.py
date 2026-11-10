@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.domain.models import GraphEdge, RelationType
+from app.domain.models import GraphEdge, GraphNode, RelationType
 
 TRUE = "true"
 FALSE = "false"
@@ -183,45 +183,87 @@ def _admin_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
     return conditions
 
 
-def _vulnerability_condition(edge: GraphEdge) -> dict[str, Any] | None:
+def _vulnerability_condition(
+    edge: GraphEdge,
+    source_node: GraphNode | None = None,
+    target_node: GraphNode | None = None,
+) -> dict[str, Any] | None:
     required_cve = edge.edge_metadata.get("requires_cve")
     if not isinstance(required_cve, str) or not required_cve:
         return None
     cve = required_cve.upper()
-    states = edge.edge_metadata.get("vulnerability_status")
-    state = (
-        next(
-            (value for key, value in states.items() if str(key).upper() == cve),
-            None,
-        )
-        if isinstance(states, dict)
-        else None
+    sources: list[Any] = []
+
+    def add_state(metadata: dict[str, Any], *, state_field: str, remediated_field: str) -> None:
+        states = metadata.get(state_field)
+        if isinstance(states, dict):
+            sources.extend(
+                value for key, value in states.items() if str(key).upper() == cve
+            )
+        remediated = metadata.get(remediated_field, [])
+        if isinstance(remediated, list) and any(
+            str(value).upper() == cve for value in remediated
+        ):
+            sources.append("patched")
+
+    add_state(
+        edge.edge_metadata,
+        state_field="vulnerability_status",
+        remediated_field="remediated_cves",
     )
-    remediated = edge.edge_metadata.get("remediated_cves", [])
-    if isinstance(remediated, list) and cve in {str(value).upper() for value in remediated}:
-        state = "patched"
-    normalized = str(state).lower() if state is not None else None
-    if normalized in {"patched", "mitigated", "remediated", "fixed", "closed"}:
-        status = FALSE
-    elif normalized in {"open", "unpatched", "vulnerable", "confirmed"}:
+    required_scope = str(edge.edge_metadata.get("requires_cve_on") or "").lower()
+    scoped_nodes = (
+        [source_node]
+        if required_scope == "source"
+        else [target_node]
+        if required_scope == "target"
+        else [source_node, target_node]
+    )
+    for node in scoped_nodes:
+        if node is not None and isinstance(node.metadata, dict):
+            add_state(
+                node.metadata,
+                state_field="vulnerability_status",
+                remediated_field="remediated_cves",
+            )
+
+    normalized = {str(value).strip().lower() for value in sources}
+    active_states = {"open", "unpatched", "vulnerable", "confirmed"}
+    patched_states = {"patched", "mitigated", "remediated", "fixed", "closed"}
+    has_active = bool(normalized & active_states)
+    has_patched = bool(normalized & patched_states)
+    if has_active and has_patched:
+        status = UNKNOWN
+        reason = (
+            f"Conflicting evidence exists for {cve}: at least one source says open "
+            "and another says patched or remediated."
+        )
+    elif has_active:
         status = TRUE
+        reason = f"Evidence records {cve} as open/unpatched on the relationship or a scoped endpoint."
+    elif has_patched:
+        status = FALSE
+        reason = f"Evidence records {cve} as patched or remediated on the relationship or scoped endpoint."
     else:
         status = UNKNOWN
+        reason = f"No CVE-specific state for {cve} is available on the relationship or scoped endpoints."
+
     return _outcome(
         condition_id=f"{edge.edge_id}:cve:{cve}",
         kind="vulnerability_unpatched",
         status=status,
         field=f"vulnerability_status.{cve}",
-        observed_value=state,
+        observed_value=sorted(normalized),
         expected="open/unpatched",
-        reason=(
-            f"Transition requires {cve} to remain unpatched; a patched or mitigated CVE blocks the transition."
-        ),
+        reason=reason,
         evidence_ref=edge.edge_metadata.get("vulnerability_evidence_ref"),
     )
 
-
-def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
+def evaluate_edge_preconditions(
+    edge: GraphEdge,
+    source_node: GraphNode | None = None,
+    target_node: GraphNode | None = None,
+) -> list[dict[str, Any]]:
     """Evaluate typed transition prerequisites with true/false/unknown outcomes.
 
     Explicit edge_metadata['preconditions'] entries add typed requirements. Network
@@ -289,7 +331,7 @@ def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
             and ("network_reachable" in edge.edge_metadata or "acl_action" in edge.edge_metadata)
         ):
             outcomes.extend(_network_conditions(edge))
-        cve_condition = _vulnerability_condition(edge)
+        cve_condition = _vulnerability_condition(edge, source_node, target_node)
         if cve_condition is not None:
             outcomes.append(cve_condition)
         return outcomes
@@ -347,8 +389,14 @@ def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
     return outcomes
 
 
-def edge_preconditions_allow(edge: GraphEdge, *, allow_unknown: bool = True) -> bool:
-    outcomes = evaluate_edge_preconditions(edge)
+def edge_preconditions_allow(
+    edge: GraphEdge,
+    *,
+    allow_unknown: bool = True,
+    source_node: GraphNode | None = None,
+    target_node: GraphNode | None = None,
+) -> bool:
+    outcomes = evaluate_edge_preconditions(edge, source_node, target_node)
     if any(item["status"] == FALSE for item in outcomes):
         return False
     return allow_unknown or not any(item["status"] == UNKNOWN for item in outcomes)
