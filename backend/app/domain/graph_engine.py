@@ -3,7 +3,7 @@ import heapq
 import json
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,6 +19,11 @@ from app.domain.models import (
     PathStepData,
 )
 from app.domain.path_semantics import build_path_explanation, build_step_explanation
+from app.domain.preconditions import (
+    edge_preconditions_allow,
+    evaluate_edge_preconditions,
+    precondition_summary,
+)
 from app.domain.scoring import SCORING_VERSION, score_attack_path
 
 
@@ -180,16 +185,20 @@ def build_networkx_graph(
     return graph, stats
 
 
-def _edge_allowed(edge: GraphEdge, constraints: PathSearchConstraints) -> bool:
-    if edge.is_suppressed:
-        return False
-    if edge.confidence < constraints.min_confidence:
+def _edge_allowed(
+    edge: GraphEdge,
+    constraints: PathSearchConstraints,
+    source_node: GraphNode | None = None,
+    target_node: GraphNode | None = None,
+) -> bool:
+    if edge.is_suppressed or edge.confidence < constraints.min_confidence:
         return False
     if not constraints.include_inferred and edge.fact_kind == FactKind.INFERRED_RELATIONSHIP:
         return False
-    return (
-        constraints.allowed_edge_types is None
-        or edge.relation_type in constraints.allowed_edge_types
+    if constraints.allowed_edge_types is not None and edge.relation_type not in constraints.allowed_edge_types:
+        return False
+    return edge_preconditions_allow(
+        edge, allow_unknown=constraints.allow_unknown_preconditions
     )
 
 
@@ -205,6 +214,7 @@ def _compute_determinism_hash(
     edge_ids: list[str],
     algorithm: str,
     scoring_version: str,
+    allow_unknown_preconditions: bool = True,
 ) -> str:
     canonical = json.dumps(
         {
@@ -213,6 +223,7 @@ def _compute_determinism_hash(
             "edges": edge_ids,
             "algorithm": algorithm,
             "scoring_version": scoring_version,
+            "allow_unknown_preconditions": allow_unknown_preconditions,
         },
         sort_keys=True,
     )
@@ -234,7 +245,9 @@ def _compute_target_lower_bounds(
         if u not in rev_filtered or v not in rev_filtered:
             continue
         edge_obj: GraphEdge = data["edge"]
-        if not _edge_allowed(edge_obj, constraints):
+        if not _edge_allowed(
+            edge_obj, constraints, graph.nodes[u]["node"], graph.nodes[v]["node"]
+        ):
             continue
         w = float(data["weight"])
         if rev_filtered.has_edge(v, u):
@@ -327,9 +340,9 @@ def find_attack_paths(
                 if rem_hops is None or (len(edge_seq) + 1 + rem_hops) > constraints.max_hops:
                     continue
                 edge_obj: GraphEdge = data["edge"]
-                if not _edge_allowed(edge_obj, constraints):
-                    continue
                 nxt_node: GraphNode = graph.nodes[nxt_key]["node"]
+                if not _edge_allowed(edge_obj, constraints, graph.nodes[curr_key]["node"], nxt_node):
+                    continue
                 if not _node_allowed(nxt_node, constraints):
                     continue
                 queue.append((nxt_key, [*path_keys, nxt_key], [*edge_seq, edge_obj]))
@@ -379,9 +392,9 @@ def find_attack_paths(
                 if (hop_len + 1 + rem_hops) > constraints.max_hops:
                     continue
                 edge_obj = data["edge"]
-                if not _edge_allowed(edge_obj, constraints):
-                    continue
                 nxt_node = graph.nodes[nxt_key]["node"]
+                if not _edge_allowed(edge_obj, constraints, graph.nodes[curr_key]["node"], nxt_node):
+                    continue
                 if not _node_allowed(nxt_node, constraints):
                     continue
                 new_cost = round(cost + float(data["weight"]), 6)
@@ -399,6 +412,7 @@ def find_attack_paths(
         "min_confidence": constraints.min_confidence,
         "top_k": constraints.top_k,
         "include_inferred": constraints.include_inferred,
+        "allow_unknown_preconditions": constraints.allow_unknown_preconditions,
         "allowed_edge_types": [e.value for e in constraints.allowed_edge_types]
         if constraints.allowed_edge_types is not None
         else None,
@@ -413,14 +427,26 @@ def find_attack_paths(
         for idx, edge_obj in enumerate(edge_seq, start=1):
             src_n = path_nodes[idx - 1]
             tgt_n = path_nodes[idx]
-            step_datas.append(
-                build_step_explanation(
-                    step_order=idx,
-                    edge=edge_obj,
-                    src_node=src_n,
-                    tgt_node=tgt_n,
-                )
+            step_data = build_step_explanation(
+                step_order=idx,
+                edge=edge_obj,
+                src_node=src_n,
+                tgt_node=tgt_n,
             )
+            step_data.precondition_outcomes = evaluate_edge_preconditions(edge_obj)
+            for outcome in step_data.precondition_outcomes:
+                step_data.preconditions.append(
+                    f"{outcome['kind']}: {outcome['status']} — {outcome['reason']}"
+                )
+                if outcome["status"] == "unknown":
+                    step_data.assumptions.append(
+                        f"Executable precondition '{outcome['kind']}' is unknown; this transition is conditional."
+                    )
+            if step_data.precondition_outcomes:
+                step_data.assumptions.append(
+                    f"Executable transition preconditions are {precondition_summary(step_data.precondition_outcomes)}."
+                )
+            step_datas.append(step_data)
 
         breakdown = score_attack_path(
             start_node=start_n,
@@ -444,6 +470,7 @@ def find_attack_paths(
             [e.edge_id for e in edge_seq],
             constraints.algorithm.value,
             SCORING_VERSION,
+            constraints.allow_unknown_preconditions,
         )
         scored_results.append(
             AttackPathResult(
