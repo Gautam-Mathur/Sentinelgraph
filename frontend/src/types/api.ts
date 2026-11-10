@@ -316,6 +316,16 @@ export interface PathStepItem {
   fact_kind: FactKind;
   confidence: number;
   preconditions: string[];
+  precondition_outcomes?: Array<{
+    condition_id: string;
+    kind: string;
+    status: "true" | "false" | "unknown";
+    field?: string | null;
+    observed_value?: unknown;
+    expected?: unknown;
+    reason: string;
+    evidence_ref?: string | null;
+  }>;
   assumptions: string[];
   evidence_refs: ProvenanceRef[];
   narrative: string;
@@ -701,6 +711,9 @@ export interface CapabilityTransition {
   stage_name: string;
   mechanism: string;
   preconditions_met?: string[];
+  same_pair_path_search_complete?: boolean;
+  same_pair_reachable_if_removed?: boolean;
+  same_pair_reachability_verification_complete?: boolean;
   evidence_provenance?: Record<string, unknown>;
   paths_in_assessment_count: number;
   same_pair_bypasses_if_removed: number;
@@ -714,10 +727,17 @@ export interface PerStepSensitivityItem {
   relationship_id: string;
   transition: string;
   this_path_eliminated: boolean;
+  /** Candidate count only, not necessarily the total number of simple paths. */
   same_pair_bypasses_remaining: number;
+  same_pair_path_search_complete?: boolean;
+  same_pair_reachability_status?: string;
+  same_pair_reachable?: boolean;
+  same_pair_reachability_verification_complete?: boolean;
   bypass_routes_preview: string[];
   assessment_paths_broken: number;
   assessment_paths_remaining: number;
+  assessment_reachable_remaining?: boolean;
+  assessment_reachability_verification_complete?: boolean;
   is_pair_bridge_chokepoint: boolean;
   is_assessment_chokepoint: boolean;
 }
@@ -766,7 +786,12 @@ export interface PathIntelligenceResponse {
     capability_chain: CapabilityTransition[];
     structural_context: {
       total_assessment_paths: number;
+      /** Candidate route count returned by bounded path enumeration. */
       same_pair_total_paths: number;
+      same_pair_path_count_semantics?: string;
+      same_pair_path_search_complete?: boolean;
+      same_pair_reachable?: boolean;
+      same_pair_reachability_verification_complete?: boolean;
       parallel_bypass_paths_count: number;
       chokepoint_step_orders: number[];
       scc_cycle_count: number;
