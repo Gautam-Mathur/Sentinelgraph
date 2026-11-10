@@ -771,7 +771,12 @@ def analyze_assessment_intelligence(
         ),
     )
 
-    crown_jewels = sorted({p.target_node_label for p in baseline_paths})
+    crown_jewels = sorted(
+        node_map[key].label
+        for key in baseline_reachability.reachable_target_keys
+        if key in node_map
+        and (node_map[key].is_crown_jewel or node_map[key].criticality == "critical")
+    )
     inferred_paths = sum(
         1
         for p in baseline_paths
@@ -803,6 +808,8 @@ def analyze_assessment_intelligence(
             "path_count_semantics": "returned_candidate_count_not_total",
             "path_search_complete": not search_out.is_truncated,
             "path_search_truncation_reason": search_out.truncation_reason,
+            "single_point_chokepoints_scope": "edges_present_in_returned_path_candidates",
+            "inferred_path_count_semantics": "returned_candidate_count_not_total",
             "baseline_possible_reachability": baseline_reachability.reachable_unbounded,
             "baseline_reachable_within_max_hops": baseline_reachability.reachable_within_max_hops,
             "baseline_confirmed_reachability": baseline_reachability.confirmed_reachable_unbounded,
@@ -869,6 +876,10 @@ def analyze_single_path_intelligence(
         max_candidates=constraints.max_candidates,
         top_k=25,
         include_inferred=constraints.include_inferred,
+        allowed_edge_types=constraints.allowed_edge_types,
+        excluded_node_keys=constraints.excluded_node_keys,
+        excluded_environments=constraints.excluded_environments,
+        allow_unknown_preconditions=constraints.allow_unknown_preconditions,
         as_of=constraints.as_of,
     )
     g_live, _ = build_networkx_graph(nodes, edges, as_of=constraints.as_of)
@@ -982,6 +993,8 @@ def analyze_single_path_intelligence(
             cap = describe_capability_transition(
                 step_order=step_order, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
             )
+            cap["precondition_outcomes"] = evaluate_edge_preconditions(edge_obj)
+            cap["precondition_summary"] = precondition_summary(cap["precondition_outcomes"])
             cap["paths_in_assessment_count"] = assess_hits
             cap["same_pair_bypasses_if_removed"] = len(pair_after)
             cap["same_pair_path_search_complete"] = not pair_after_out.is_truncated
