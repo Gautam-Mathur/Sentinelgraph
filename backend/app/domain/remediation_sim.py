@@ -232,12 +232,16 @@ def apply_sandbox_transforms(
                     node.metadata["remediated_cves"] = remediated
                     if prior_state in active_states and node.open_cve_count > 0:
                         count_map = node.metadata.get("vulnerability_finding_counts")
-                        count = (
-                            int(count_map.get(matching_key or cve, 1))
+                        raw_count = (
+                            count_map.get(matching_key or cve, 1)
                             if isinstance(count_map, dict)
                             else 1
                         )
-                        node.open_cve_count = max(0, node.open_cve_count - max(1, count))
+                        try:
+                            finding_count = max(1, int(raw_count))
+                        except (TypeError, ValueError):
+                            finding_count = 1
+                        node.open_cve_count = max(0, node.open_cve_count - finding_count)
                         if isinstance(count_map, dict):
                             updated_counts = dict(count_map)
                             updated_counts[cve] = 0
