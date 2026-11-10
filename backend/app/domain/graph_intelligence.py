@@ -8,6 +8,7 @@ from app.domain.graph_engine import (
     find_attack_paths,
     verify_reachability,
 )
+from app.domain.preconditions import evaluate_edge_preconditions, precondition_summary
 from app.domain.models import (
     AttackPathResult,
     FactKind,
