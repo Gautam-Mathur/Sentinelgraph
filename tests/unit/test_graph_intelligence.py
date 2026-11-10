@@ -165,7 +165,8 @@ def test_disjoint_parallel_branches_require_two_edge_cut_set() -> None:
 
     assert intel["summary"]["total_active_paths"] == 2
     assert intel["summary"]["single_point_chokepoints_count"] == 0
-    assert intel["summary"]["min_cut_size"] is None\n    assert intel["summary"]["candidate_cut_size"] == 2
+    assert intel["summary"]["min_cut_size"] is None
+    assert intel["summary"]["candidate_cut_size"] == 2
     assert intel["summary"]["minimum_cut_proven"] is False
 
     top_cut = intel["cut_sets"][0]
