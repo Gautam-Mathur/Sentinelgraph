@@ -1018,7 +1018,7 @@ def analyze_single_path_intelligence(
             cap = describe_capability_transition(
                 step_order=step_order, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
             )
-            cap["precondition_outcomes"] = evaluate_edge_preconditions(edge_obj)
+            cap["precondition_outcomes"] = evaluate_edge_preconditions(edge_obj, src_n, tgt_n)
             cap["precondition_summary"] = precondition_summary(cap["precondition_outcomes"])
             cap["paths_in_assessment_count"] = assess_hits
             cap["same_pair_bypasses_if_removed"] = len(pair_after)
