@@ -84,7 +84,8 @@ def test_parallel_relationship_centrality_is_keyed_and_weight_aware() -> None:
     assert stats.edge_betweenness["fast-connect"] > stats.edge_betweenness["slow-expose"]
     assert stats.edge_betweenness["slow-expose"] == 0.0
     by_id = {item["edge_id"]: item for item in stats.top_bridge_edges}
-    assert by_id["fast-connect"]["betweenness_centrality"] > by_id["slow-expose"]["betweenness_centrality"]
+    assert by_id["fast-connect"]["betweenness_centrality"] == stats.edge_betweenness["fast-connect"]
+    assert "slow-expose" not in by_id  # zero-centrality edges are intentionally omitted from bridge highlights
 
 
 def test_explicitly_false_cve_precondition_is_excluded_from_active_graph() -> None:
