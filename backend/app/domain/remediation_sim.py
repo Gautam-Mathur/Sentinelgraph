@@ -252,8 +252,19 @@ def apply_sandbox_transforms(
                     linked_cve = edge.edge_metadata.get("requires_cve")
                     if not isinstance(linked_cve, str) or linked_cve.upper() != cve:
                         continue
-                    if tx.asset_id and tx.asset_id not in (edge.source_id, edge.target_id):
-                        continue
+                    if tx.asset_id:
+                        required_scope = str(
+                            edge.edge_metadata.get("requires_cve_on") or ""
+                        ).lower()
+                        if required_scope == "source" and tx.asset_id != edge.source_id:
+                            continue
+                        if required_scope == "target" and tx.asset_id != edge.target_id:
+                            continue
+                        if required_scope not in {"source", "target"} and tx.asset_id not in (
+                            edge.source_id,
+                            edge.target_id,
+                        ):
+                            continue
                     raw_states = edge.edge_metadata.get("vulnerability_status")
                     state_map = raw_states if isinstance(raw_states, dict) else {}
                     states = dict(state_map)
