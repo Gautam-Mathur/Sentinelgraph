@@ -52,6 +52,23 @@ class PathSearchOutput:
     scc_cycles: list[list[str]] = field(default_factory=list)
 
 
+@dataclass
+class ReachabilityVerification:
+    reachable_unbounded: bool
+    reachable_within_max_hops: bool
+    confirmed_reachable_unbounded: bool
+    complete: bool
+    status: str
+    witness_path_node_keys: list[str] = field(default_factory=list)
+    witness_path_edge_ids: list[str] = field(default_factory=list)
+    conditional_witness_edge_ids: list[str] = field(default_factory=list)
+    confirmed_witness_edge_ids: list[str] = field(default_factory=list)
+    examined_nodes: int = 0
+    examined_edges: int = 0
+    max_hops: int = 0
+    method: str = "multi_source_bfs"
+
+
 def edge_traversal_cost(edge: GraphEdge) -> float:
     """Lower cost means higher attacker feasibility / higher evidence confidence."""
     conf = max(0.05, min(1.0, edge.confidence))
@@ -273,6 +290,152 @@ def _compute_target_lower_bounds(
                 hops_to_target[v] = d_next
                 bfs_q.append(v)
     return dist_to_target, hops_to_target
+
+
+
+def _bfs_reachability_witness(
+    graph: nx.MultiDiGraph,
+    constraints: PathSearchConstraints,
+    *,
+    allow_unknown_preconditions: bool,
+    hop_limit: int | None,
+) -> tuple[list[str], list[str], list[str], int, int]:
+    """Return one shortest witness using the same transition and scope filters as path search."""
+    effective_constraints = replace(
+        constraints, allow_unknown_preconditions=allow_unknown_preconditions
+    )
+    starts = sorted(
+        key
+        for key in constraints.start_node_keys
+        if key in graph and _node_allowed(graph.nodes[key]["node"], effective_constraints)
+    )
+    targets = set(constraints.target_node_keys)
+    queue: deque[tuple[str, int]] = deque()
+    parent: dict[str, tuple[str, str] | None] = {}
+    for start in starts:
+        if start not in parent:
+            parent[start] = None
+            queue.append((start, 0))
+
+    examined_nodes = 0
+    examined_edges = 0
+    found_target: str | None = None
+    while queue:
+        current, depth = queue.popleft()
+        examined_nodes += 1
+        if current in targets and depth > 0:
+            found_target = current
+            break
+        if hop_limit is not None and depth >= hop_limit:
+            continue
+
+        neighbors = sorted(
+            graph.out_edges(current, keys=True, data=True),
+            key=lambda item: (item[1], item[2]),
+        )
+        for _, next_key, edge_id, data in neighbors:
+            examined_edges += 1
+            if next_key in parent:
+                continue
+            edge: GraphEdge = data["edge"]
+            next_node: GraphNode = graph.nodes[next_key]["node"]
+            if not _node_allowed(next_node, effective_constraints):
+                continue
+            if not _edge_allowed(
+                edge,
+                effective_constraints,
+                graph.nodes[current]["node"],
+                next_node,
+            ):
+                continue
+            parent[next_key] = (current, str(edge_id))
+            queue.append((next_key, depth + 1))
+
+    if found_target is None:
+        return [], [], [], examined_nodes, examined_edges
+
+    node_path = [found_target]
+    edge_path: list[str] = []
+    cursor = found_target
+    while parent[cursor] is not None:
+        previous, edge_id = parent[cursor]  # type: ignore[misc]
+        node_path.append(previous)
+        edge_path.append(edge_id)
+        cursor = previous
+    node_path.reverse()
+    edge_path.reverse()
+
+    conditional_ids = [
+        edge_id
+        for edge_id in edge_path
+        if any(
+            outcome["status"] == "unknown"
+            for outcome in evaluate_edge_preconditions(
+                graph.get_edge_data(node_path[idx], node_path[idx + 1], edge_id)["edge"]
+            )
+        )
+    ]
+    return node_path, edge_path, conditional_ids, examined_nodes, examined_edges
+
+
+def verify_reachability(
+    graph: nx.MultiDiGraph,
+    constraints: PathSearchConstraints,
+) -> ReachabilityVerification:
+    """Independently verify reachability without enumerating all simple paths.
+
+    Possible reachability includes unknown prerequisites as conditional assumptions;
+    confirmed reachability requires every transition prerequisite to be known true.
+    The unbounded pass prevents max_hops from being mistaken for graph disconnection.
+    """
+    possible_nodes, possible_edges, conditional_edges, examined_nodes, examined_edges = (
+        _bfs_reachability_witness(
+            graph,
+            constraints,
+            allow_unknown_preconditions=constraints.allow_unknown_preconditions,
+            hop_limit=None,
+        )
+    )
+    bounded_nodes, bounded_edges, _, bounded_examined_nodes, bounded_examined_edges = (
+        _bfs_reachability_witness(
+            graph,
+            constraints,
+            allow_unknown_preconditions=constraints.allow_unknown_preconditions,
+            hop_limit=constraints.max_hops,
+        )
+    )
+    confirmed_nodes, confirmed_edges, _, confirmed_examined_nodes, confirmed_examined_edges = (
+        _bfs_reachability_witness(
+            graph,
+            constraints,
+            allow_unknown_preconditions=False,
+            hop_limit=None,
+        )
+    )
+    reachable = bool(possible_edges)
+    bounded_reachable = bool(bounded_edges)
+    confirmed_reachable = bool(confirmed_edges)
+    if reachable and bounded_reachable:
+        status = "REACHABLE_PATH_EXISTS"
+    elif reachable:
+        status = "REACHABLE_OUTSIDE_HOP_LIMIT"
+    else:
+        status = "NO_REACHABILITY_WITHIN_MODEL"
+
+    return ReachabilityVerification(
+        reachable_unbounded=reachable,
+        reachable_within_max_hops=bounded_reachable,
+        confirmed_reachable_unbounded=confirmed_reachable,
+        complete=True,
+        status=status,
+        witness_path_node_keys=possible_nodes,
+        witness_path_edge_ids=possible_edges,
+        conditional_witness_edge_ids=conditional_edges,
+        confirmed_witness_edge_ids=confirmed_edges,
+        examined_nodes=max(examined_nodes, bounded_examined_nodes, confirmed_examined_nodes),
+        examined_edges=max(examined_edges, bounded_examined_edges, confirmed_examined_edges),
+        max_hops=constraints.max_hops,
+    )
 
 
 def find_attack_paths(
