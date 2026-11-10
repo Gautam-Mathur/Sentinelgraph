@@ -413,6 +413,12 @@ export interface RemediationItem {
     possible_residual_reachability?: boolean;
     confirmed_residual_reachability?: boolean;
     reachability_verification_complete?: boolean;
+    applied_transforms?: Array<Record<string, unknown> & {
+      transform_type?: string;
+      status?: "applied" | "not_applied" | string;
+      reason?: string | null;
+      affected_elements?: number;
+    }>;
   };
   is_modelled_only: boolean;
   validation_assessment_id: string | null;
@@ -711,6 +717,14 @@ export interface CapabilityTransition {
   stage_name: string;
   mechanism: string;
   preconditions_met?: string[];
+  precondition_outcomes?: Array<{
+    condition_id: string;
+    kind: string;
+    status: "true" | "false" | "unknown";
+    reason: string;
+    evidence_ref?: string | null;
+  }>;
+  precondition_summary?: "satisfied" | "blocked" | "conditional" | string;
   same_pair_path_search_complete?: boolean;
   same_pair_reachable_if_removed?: boolean;
   same_pair_reachability_verification_complete?: boolean;
