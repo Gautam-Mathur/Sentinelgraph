@@ -78,7 +78,7 @@ export const RemediationPage: React.FC = () => {
         },
       });
       setNotice(
-        `Simulated "${sim.name}": eliminated ${sim.delta_summary.paths_eliminated} enumerated path candidates (score delta -${sim.delta_summary.highest_score_reduction}). ${sim.modelled_metrics.reachable_unbounded ? "A possible residual route remains." : "No possible route remains in the sandbox model."}`
+        `Simulated "${sim.name}": eliminated ${sim.delta_summary.paths_eliminated} enumerated path candidates (score delta -${sim.delta_summary.highest_score_reduction}). ${sim.modelled_metrics.reachable_unbounded === true ? "A possible residual route remains." : sim.modelled_metrics.reachability_verification_complete === true ? "No possible route remains in the sandbox model." : "Reachability is unknown for this saved simulation."}`
       );
       await loadAll();
     } catch (err) {
