@@ -192,3 +192,40 @@ def test_reachability_verifier_is_independent_of_candidate_cap_and_hop_limit() -
     assert too_short.reachable_unbounded is True
     assert too_short.reachable_within_max_hops is False
     assert too_short.status == "REACHABLE_OUTSIDE_HOP_LIMIT"
+
+
+
+def test_explicit_preconditions_do_not_override_mandatory_cve_gate() -> None:
+    now = datetime.now(UTC)
+    nodes = [
+        GraphNode(NodeKind.ASSET, "web", "web", is_external_entry=True),
+        GraphNode(NodeKind.ASSET, "db", "db", criticality="critical"),
+    ]
+    edge = GraphEdge(
+        "explicit-cve",
+        NodeKind.ASSET,
+        "web",
+        NodeKind.ASSET,
+        "db",
+        RelationType.CONNECTS_TO,
+        FactKind.OBSERVED_FACT,
+        0.95,
+        now,
+        edge_metadata={
+            "preconditions": [{"kind": "network_reachable", "status": True}],
+            "requires_cve": "CVE-2024-56789",
+        },
+    )
+    graph, _ = build_networkx_graph(nodes, [edge])
+    constraints = PathSearchConstraints(
+        start_node_keys=["asset:web"],
+        target_node_keys=["asset:db"],
+        max_hops=1,
+        allow_unknown_preconditions=False,
+    )
+    # The custom network precondition is true, but the separate mandatory CVE state
+    # remains unknown and therefore cannot pass confirmed-only traversal.
+    assert find_attack_paths(graph, constraints).paths == []
+    edge.edge_metadata["vulnerability_status"] = {"CVE-2024-56789": "open"}
+    graph_open, _ = build_networkx_graph(nodes, [edge])
+    assert len(find_attack_paths(graph_open, constraints).paths) == 1
