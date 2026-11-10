@@ -17,8 +17,6 @@ jobs:
           POSTGRES_PASSWORD: postgres_dev_pw
         ports:
           - 5432:5432
-        volumes:
-          - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
         options: >-
           --health-cmd "pg_isready -U postgres -d sentinelgraph"
           --health-interval 5s
@@ -52,6 +50,15 @@ jobs:
 
       - name: Run Ruff lint
         run: ruff check backend tests
+
+      - name: Initialize PostgreSQL non-superuser RLS runtime role
+        run: |
+          python - <<'PY'
+          import pathlib, psycopg
+          sql = pathlib.Path("infra/postgres/init.sql").read_text()
+          with psycopg.connect("postgresql://postgres:postgres_dev_pw@localhost:5432/sentinelgraph", autocommit=True) as conn:
+              conn.execute(sql)
+          PY
 
       - name: Apply Alembic migrations and seed synthetic demo tenant
         env:
