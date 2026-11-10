@@ -264,16 +264,16 @@ def evaluate_edge_preconditions(
     source_node: GraphNode | None = None,
     target_node: GraphNode | None = None,
 ) -> list[dict[str, Any]]:
-    """Evaluate typed transition prerequisites with true/false/unknown outcomes.
+    """Evaluate explicit and relationship-specific transition prerequisites.
 
-    Explicit edge_metadata['preconditions'] entries add typed requirements. Network
-    and ACL metadata, when present, are still evaluated conjunctively. A mandatory
-    requires_cve condition is always evaluated independently of custom requirements.
-    Missing facts evaluate to unknown; they are never silently treated as true.
+    Explicit requirements are additive. They do not bypass mandatory relationship
+    gates or a requires_cve prerequisite. A typed explicit requirement may satisfy
+    the corresponding built-in gate; missing evidence remains unknown.
     """
+    outcomes: list[dict[str, Any]] = []
     explicit = edge.edge_metadata.get("preconditions")
-    if isinstance(explicit, list) and explicit:
-        outcomes: list[dict[str, Any]] = []
+    explicit_kinds: set[str] = set()
+    if isinstance(explicit, list):
         for index, spec in enumerate(explicit):
             if not isinstance(spec, dict):
                 outcomes.append(
@@ -286,6 +286,7 @@ def evaluate_edge_preconditions(
                 )
                 continue
             kind = str(spec.get("kind") or spec.get("type") or "custom")
+            explicit_kinds.add(kind)
             condition_id = str(spec.get("id") or f"{edge.edge_id}:{kind}:{index}")
             raw_status = spec.get("status")
             if isinstance(raw_status, bool):
@@ -326,19 +327,13 @@ def evaluate_edge_preconditions(
                     evidence_ref=spec.get("evidence_ref"),
                 )
             )
-        if (
-            edge.relation_type in (RelationType.CONNECTS_TO, RelationType.EXPOSES)
-            and ("network_reachable" in edge.edge_metadata or "acl_action" in edge.edge_metadata)
-        ):
-            outcomes.extend(_network_conditions(edge))
-        cve_condition = _vulnerability_condition(edge, source_node, target_node)
-        if cve_condition is not None:
-            outcomes.append(cve_condition)
-        return outcomes
 
-    outcomes = []
     if edge.relation_type in (RelationType.CONNECTS_TO, RelationType.EXPOSES):
-        outcomes.extend(_network_conditions(edge))
+        if not ({"network_reachable", "acl_permitted"} & explicit_kinds):
+            outcomes.extend(_network_conditions(edge))
+        elif "network_reachable" not in edge.edge_metadata and "acl_action" in edge.edge_metadata:
+            # Still honour an independently supplied ACL deny/allow fact.
+            outcomes.extend(_network_conditions(edge))
     elif edge.relation_type == RelationType.CAN_ADMINISTER:
         outcomes.extend(_admin_conditions(edge))
     elif edge.relation_type == RelationType.MEMBER_OF:
@@ -387,7 +382,6 @@ def evaluate_edge_preconditions(
         outcomes.append(cve_condition)
 
     return outcomes
-
 
 def edge_preconditions_allow(
     edge: GraphEdge,
