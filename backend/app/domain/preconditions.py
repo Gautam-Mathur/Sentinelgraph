@@ -338,9 +338,7 @@ def edge_preconditions_allow(edge: GraphEdge, *, allow_unknown: bool = True) -> 
     outcomes = evaluate_edge_preconditions(edge)
     if any(item["status"] == FALSE for item in outcomes):
         return False
-    if not allow_unknown and any(item["status"] == UNKNOWN for item in outcomes):
-        return False
-    return True
+    return allow_unknown or not any(item["status"] == UNKNOWN for item in outcomes)
 
 
 def precondition_summary(outcomes: list[dict[str, Any]]) -> str:
