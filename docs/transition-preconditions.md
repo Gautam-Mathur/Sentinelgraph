@@ -69,13 +69,18 @@ these metadata fields:
 
 | Relationship | Required metadata | Meaning when missing |
 |---|---|---|
-| `CONNECTS_TO`, `EXPOSES` | `network_reachable: true` or `acl_action: allow/permit/accept` | Unknown |
+| `CONNECTS_TO`, `EXPOSES` | `network_reachable: true` and/or `acl_action: allow/permit/accept` | Unknown |
 | `CAN_ADMINISTER` | `admin_enabled` (or `standing_admin_enabled`); when enforced, `pam_approval_granted` and `mfa_satisfied` | Unknown |
 | `MEMBER_OF` | `membership_active: true` | Unknown |
 | `HAS_ROLE` | `credential_available: true` | Unknown |
 | `TRUSTS` | `trust_accepts_token: true` | Unknown |
 | `RUNS_SERVICE` | `service_listening: true` | Unknown |
 | Any edge with `requires_cve` | `vulnerability_status[CVE-ID]` | Unknown |
+
+When both `network_reachable` and `acl_action` are supplied, both are evaluated;
+contradictory evidence (for example, reachability true with an ACL deny) blocks the
+transition. An empty `preconditions` list does not suppress built-in relationship
+checks.
 
 For CVE prerequisites, `open`, `unpatched`, `vulnerable`, and `confirmed` mean
 the vulnerability remains a prerequisite. `patched`, `mitigated`, `remediated`,
