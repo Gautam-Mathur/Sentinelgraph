@@ -172,7 +172,7 @@ export const AssessmentsPage: React.FC = () => {
       });
       setSimResult(sim);
       setStatusMsg(
-        `Simulated "${cut.label}": eliminated ${sim.delta_summary.paths_eliminated} of ${sim.baseline_metrics.total_paths} path(s).`
+        `Simulated "${cut.label}": eliminated ${sim.delta_summary.paths_eliminated} of ${sim.baseline_metrics.total_paths} enumerated path candidates. ${sim.modelled_metrics.reachable_unbounded === true ? "A possible residual route remains." : sim.modelled_metrics.reachability_verification_complete === true ? "BFS found no possible residual route in the sandbox model." : "Reachability is unknown."}`
       );
     } catch (err) {
       setError(err);
@@ -209,6 +209,13 @@ export const AssessmentsPage: React.FC = () => {
         baseline_paths: sim.baseline_metrics.total_paths,
         paths_broken: sim.delta_summary.paths_eliminated,
         residual_paths: sim.modelled_metrics.total_paths,
+        reachable_unbounded: sim.modelled_metrics.reachable_unbounded,
+        reachability_verification_complete: sim.modelled_metrics.reachability_verification_complete,
+        verification_status: sim.modelled_metrics.reachability_verification_complete
+          ? sim.modelled_metrics.reachable_unbounded ? "PARTIAL_CUT" : "MODEL_VERIFIED_CUT"
+          : "INDETERMINATE",
+        minimum_cut_proven: false,
+        path_search_complete: sim.modelled_metrics.path_search_complete,
         coverage_pct: 100,
         critical_assets_unlinked: sim.delta_summary.critical_assets_unlinked,
         highest_score_reduction: sim.delta_summary.highest_score_reduction,
@@ -218,7 +225,7 @@ export const AssessmentsPage: React.FC = () => {
         rationale: "Single edge sandbox cut triggered from graph inspector.",
       });
       setStatusMsg(
-        `Edge sandbox cut: eliminated ${sim.delta_summary.paths_eliminated} path(s), ${sim.modelled_metrics.total_paths} residual path(s) remain.`
+        `Edge sandbox cut: eliminated ${sim.delta_summary.paths_eliminated} enumerated candidates. ${sim.modelled_metrics.reachable_unbounded === true ? "A possible route remains." : sim.modelled_metrics.reachability_verification_complete === true ? "No possible route remains in the sandbox model." : "Reachability is unknown."}`
       );
     } catch (err) {
       setError(err);
@@ -344,21 +351,28 @@ export const AssessmentsPage: React.FC = () => {
           {intel && (
             <div className="intel-summary-grid" aria-label="Graph intelligence summary">
               <div className="intel-metric-tile">
-                <div className="intel-metric-label">Reachable Attack Paths</div>
+                <div className="intel-metric-label">Enumerated Path Candidates</div>
                 <div className="intel-metric-val">{intel.summary.total_active_paths}</div>
-              </div>
-              <div className="intel-metric-tile">
-                <div className="intel-metric-label">Minimum Cut-Set Size</div>
-                <div className="intel-metric-val">
-                  {intel.summary.min_cut_size !== null ? `${intel.summary.min_cut_size} edge(s)` : "None"}
+                <div className="intel-metric-note">
+                  Search complete: {intel.summary.path_search_complete ? "Yes" : "No"} ·
+                  Possible route: {intel.summary.baseline_possible_reachability ? "Yes" : intel.summary.reachability_verification_complete ? "No" : "Unknown"}
                 </div>
               </div>
               <div className="intel-metric-tile">
-                <div className="intel-metric-label">1-Edge Chokepoints</div>
+                <div className="intel-metric-label">Candidate Cut Size</div>
+                <div className="intel-metric-val">
+                  {intel.summary.candidate_cut_size !== null && intel.summary.candidate_cut_size !== undefined
+                    ? `${intel.summary.candidate_cut_size} edge(s)`
+                    : "None returned"}
+                </div>
+                <div className="intel-metric-note">Global minimum not proven</div>
+              </div>
+              <div className="intel-metric-tile">
+                <div className="intel-metric-label">BFS-Verified 1-Edge Chokepoints</div>
                 <div className="intel-metric-val">{intel.summary.single_point_chokepoints_count}</div>
               </div>
               <div className="intel-metric-tile">
-                <div className="intel-metric-label">Inferred-Dependent Paths</div>
+                <div className="intel-metric-label">Inferred-Dependent Candidate Paths</div>
                 <div className="intel-metric-val">
                   {intel.summary.inferred_dependent_paths} / {intel.summary.total_active_paths}
                 </div>
@@ -457,7 +471,7 @@ export const AssessmentsPage: React.FC = () => {
           {intel && (
             <div className="card" style={{ marginBlockStart: "1rem" }}>
               <h3 className="card-title">
-                Graph Intelligence: Why Paths Exist, Assumptions &amp; Minimum Cut-Sets
+                Graph Intelligence: Why Paths Exist, Assumptions &amp; Candidate Cuts
               </h3>
               <Tabs
                 label="Graph Intelligence Perspectives"
@@ -548,11 +562,13 @@ export const AssessmentsPage: React.FC = () => {
                   },
                   {
                     id: "cuts",
-                    label: `Minimum Cut-Sets (${intel.cut_sets.length})`,
+                    label: `Candidate Cuts (${intel.cut_sets.length})`,
                     content:
                       intel.cut_sets.length === 0 ? (
                         <p style={{ color: "var(--text-secondary)", margin: 0 }}>
-                          No cut-sets required — zero active attack paths remain.
+                          {intel.summary.baseline_possible_reachability
+                            ? "BFS still finds a possible route, but the bounded candidate solver did not return a cut."
+                            : "Independent BFS verified that no possible route remains in the configured model."}
                         </p>
                       ) : (
                         <div className="form-stack">
@@ -568,17 +584,21 @@ export const AssessmentsPage: React.FC = () => {
                                     <strong>{cs.label}</strong>{" "}
                                     <span
                                       className={`badge ${
-                                        cs.residual_paths === 0 ? "badge-success" : "badge-medium"
+                                        cs.verification_status === "MODEL_VERIFIED_CUT" ? "badge-success" : "badge-medium"
                                       }`}
                                     >
-                                      {cs.paths_broken}/{cs.baseline_paths} paths broken ({cs.coverage_pct}
-                                      %)
+                                      {cs.baseline_paths === 0
+                                        ? "No paths enumerated; BFS witness used"
+                                        : `${cs.paths_broken}/${cs.baseline_paths} sampled candidates broken (${cs.coverage_pct}%)`}
                                     </span>{" "}
                                     <span className="badge badge-neutral">
                                       Cut Size: {cs.cut_size}
                                     </span>{" "}
                                     <span className="badge badge-neutral">
                                       Effort: {cs.effort_score}
+                                    </span>
+                                    <span className="badge badge-neutral">
+                                      {cs.verification_status ?? "INDETERMINATE"}
                                     </span>
                                   </div>
                                   <p
