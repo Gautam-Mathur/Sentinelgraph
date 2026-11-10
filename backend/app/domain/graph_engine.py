@@ -39,6 +39,7 @@ class GraphBuildStats:
     build_duration_ms: float
     top_bridge_edges: list[dict[str, Any]] = field(default_factory=list)
     edge_betweenness: dict[str, float] = field(default_factory=dict)
+    blocked_precondition_edge_count: int = 0
 
 
 @dataclass
@@ -50,6 +51,9 @@ class PathSearchOutput:
     duration_ms: float
     bridge_nodes: list[dict[str, Any]] = field(default_factory=list)
     scc_cycles: list[list[str]] = field(default_factory=list)
+    candidate_search_complete: bool = True
+    top_k_is_global: bool = True
+    ranking_scope: str = "global_candidate_universe"
 
 
 @dataclass
@@ -93,6 +97,7 @@ def build_networkx_graph(
 
     suppressed_count = 0
     expired_count = 0
+    blocked_precondition_count = 0
     active_edges = 0
 
     for edge in sorted(edges, key=lambda e: (e.source_key, e.target_key, e.edge_id)):
@@ -105,6 +110,18 @@ def build_networkx_graph(
         if edge.valid_from > ref_time:
             continue
         if edge.source_key not in graph or edge.target_key not in graph:
+            continue
+        source_node: GraphNode = graph.nodes[edge.source_key]["node"]
+        target_node: GraphNode = graph.nodes[edge.target_key]["node"]
+        # Explicitly false transition prerequisites are not active graph relationships.
+        # Unknown prerequisites remain visible as conditional hypotheses.
+        if not edge_preconditions_allow(
+            edge,
+            allow_unknown=True,
+            source_node=source_node,
+            target_node=target_node,
+        ):
+            blocked_precondition_count += 1
             continue
         graph.add_edge(
             edge.source_key,
@@ -135,11 +152,13 @@ def build_networkx_graph(
             simple_di, k=min(200, node_count), normalized=True, seed=42
         )
         raw_edge_centrality = nx.edge_betweenness_centrality(
-            simple_di, k=min(200, node_count), normalized=True, seed=42
+            graph, k=min(200, node_count), normalized=True, weight="weight", seed=42
         )
     elif node_count > 1:
         centrality = nx.betweenness_centrality(simple_di, normalized=True)
-        raw_edge_centrality = nx.edge_betweenness_centrality(simple_di, normalized=True)
+        raw_edge_centrality = nx.edge_betweenness_centrality(
+            graph, normalized=True, weight="weight"
+        )
     else:
         centrality = {}
         raw_edge_centrality = {}
@@ -162,15 +181,15 @@ def build_networkx_graph(
 
     edge_betweenness_map: dict[str, float] = {}
     bridge_edges: list[dict[str, Any]] = []
-    for u, v, _, data in sorted(
+    for u, v, edge_key, data in sorted(
         graph.edges(keys=True, data=True),
         key=lambda item: (
-            -float(raw_edge_centrality.get((item[0], item[1]), 0.0)),
+            -float(raw_edge_centrality.get((item[0], item[1], item[2]), 0.0)),
             str(item[2]),
         ),
     ):
         e_obj: GraphEdge = data["edge"]
-        ec = round(float(raw_edge_centrality.get((u, v), 0.0)), 4)
+        ec = round(float(raw_edge_centrality.get((u, v, edge_key), 0.0)), 4)
         edge_betweenness_map[e_obj.edge_id] = ec
         if ec > 0.0 and len(bridge_edges) < 10:
             src_lbl = graph.nodes[u]["node"].label
@@ -199,6 +218,7 @@ def build_networkx_graph(
         build_duration_ms=elapsed_ms,
         top_bridge_edges=bridge_edges,
         edge_betweenness=edge_betweenness_map,
+        blocked_precondition_edge_count=blocked_precondition_count,
     )
     return graph, stats
 
@@ -471,6 +491,7 @@ def find_attack_paths(
     candidates: list[tuple[float, list[str], list[GraphEdge]]] = []
     candidates_evaluated = 0
     is_truncated = False
+    candidate_search_complete = True
     truncation_reason: str | None = None
     seen_edge_sequences: set[tuple[str, ...]] = set()
 
@@ -484,10 +505,12 @@ def find_attack_paths(
         while queue:
             if time.perf_counter() > deadline:
                 is_truncated = True
+                candidate_search_complete = False
                 truncation_reason = "timeout_exceeded"
                 break
             if candidates_evaluated >= constraints.max_candidates:
                 is_truncated = True
+                candidate_search_complete = False
                 truncation_reason = "max_candidates_reached"
                 break
 
@@ -584,6 +607,13 @@ def find_attack_paths(
         "min_confidence": constraints.min_confidence,
         "top_k": constraints.top_k,
         "include_inferred": constraints.include_inferred,
+        "candidate_search_complete": candidate_search_complete,
+        "top_k_is_global": candidate_search_complete,
+        "ranking_scope": (
+            "global_candidate_universe"
+            if candidate_search_complete
+            else "evaluated_candidate_pool"
+        ),
         "allow_unknown_preconditions": constraints.allow_unknown_preconditions,
         "allowed_edge_types": [e.value for e in constraints.allowed_edge_types]
         if constraints.allowed_edge_types is not None
@@ -688,4 +718,11 @@ def find_attack_paths(
         is_truncated=is_truncated,
         truncation_reason=truncation_reason,
         duration_ms=elapsed_ms,
+        candidate_search_complete=candidate_search_complete,
+        top_k_is_global=candidate_search_complete,
+        ranking_scope=(
+            "global_candidate_universe"
+            if candidate_search_complete
+            else "evaluated_candidate_pool"
+        ),
     )
