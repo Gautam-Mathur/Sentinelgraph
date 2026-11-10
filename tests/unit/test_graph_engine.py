@@ -271,3 +271,42 @@ def test_conflicting_network_and_acl_evidence_blocks_transition() -> None:
     result = verify_reachability(graph, constraints)
     assert result.complete is True
     assert result.reachable_unbounded is False
+
+
+
+def test_cve_precondition_uses_endpoint_finding_state_without_edge_duplication() -> None:
+    now = datetime.now(UTC)
+    nodes = [
+        GraphNode(
+            NodeKind.ASSET,
+            "web",
+            "web",
+            is_external_entry=True,
+            metadata={"vulnerability_status": {"CVE-2024-24680": "open"}},
+        ),
+        GraphNode(NodeKind.ASSET, "db", "db", criticality="critical"),
+    ]
+    edge = GraphEdge(
+        "node-cve",
+        NodeKind.ASSET,
+        "web",
+        NodeKind.ASSET,
+        "db",
+        RelationType.CONNECTS_TO,
+        FactKind.OBSERVED_FACT,
+        0.94,
+        now,
+        edge_metadata={"network_reachable": True, "requires_cve": "CVE-2024-24680"},
+    )
+    strict = PathSearchConstraints(
+        start_node_keys=["asset:web"],
+        target_node_keys=["asset:db"],
+        max_hops=1,
+        allow_unknown_preconditions=False,
+    )
+    graph, _ = build_networkx_graph(nodes, [edge])
+    assert len(find_attack_paths(graph, strict).paths) == 1
+
+    nodes[0].metadata["vulnerability_status"]["CVE-2024-24680"] = "patched"
+    graph_patched, _ = build_networkx_graph(nodes, [edge])
+    assert find_attack_paths(graph_patched, strict).paths == []
