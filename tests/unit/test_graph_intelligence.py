@@ -338,3 +338,32 @@ def test_single_path_intelligence_causal_chain_bypasses_and_stale_notice() -> No
     )
     assert stale_intel["stale_path_notice"] is not None
     assert "suppressed" in stale_intel["stale_path_notice"]
+
+
+
+def test_bfs_witness_generates_cut_when_path_enumeration_returns_no_candidates() -> None:
+    nodes, edges = _build_diamond_with_bridge()
+    constraints = PathSearchConstraints(
+        start_node_keys=["asset:web"],
+        target_node_keys=["asset:db"],
+        max_hops=6,
+        top_k=20,
+        max_candidates=0,
+        include_inferred=True,
+    )
+
+    intel = analyze_assessment_intelligence(
+        nodes=nodes,
+        edges=edges,
+        constraints=constraints,
+    )
+
+    assert intel["summary"]["total_active_paths"] == 0
+    assert intel["summary"]["path_search_complete"] is False
+    assert intel["summary"]["baseline_possible_reachability"] is True
+    assert intel["cut_sets"]
+    first_cut = intel["cut_sets"][0]
+    assert first_cut["verification_status"] == "MODEL_VERIFIED_CUT"
+    assert first_cut["reachable_unbounded"] is False
+    assert first_cut["minimum_cut_proven"] is False
+    assert "BFS reachability witness" in first_cut["steps_summary"][0]
