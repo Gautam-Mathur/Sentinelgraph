@@ -1,7 +1,7 @@
 # SentinelGraph Research Upgrade: Attack-Graph Intelligence Beyond Static Paths
 
 **Research cut:** 10 November 2026  
-**Repository baseline reviewed:** `main` at `5133d14d11ee730861034f3f7a8ff7ec991e2ad1`  
+**Repository baseline reviewed:** `main` at `ff24df635d76c7ec8c5a3849bbddee86b1ddb526`  
 **Scope:** Research and architecture direction only. This document does not describe an implemented feature or propose silently changing runtime behaviour.
 
 ---
@@ -26,7 +26,7 @@ The literature supports five connected research directions:
 
 ## 2. Baseline assessment: what exists and what it does not yet prove
 
-This section describes the repository inspected at the research cut. It is not a certification of production readiness.
+This section describes the repository inspected at the research cut. It is not a certification of production readiness. The baseline includes the merged corrections to explicit administrative-gate evaluation and case-insensitive CVE remediation state. The post-merge CI run passed backend, frontend and Compose checks; the backend suite reported 73 passed and one warning.
 
 | Area | Repository baseline | Research implication |
 |---|---|---|
