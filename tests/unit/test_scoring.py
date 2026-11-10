@@ -1,5 +1,11 @@
-from pathlib import Path\n\nfrom app.domain.models import FactKind, GraphNode, NodeKind, PathStepData, RelationType
-from app.domain.scoring import (\n    SCORING_VERSION,\n    render_scoring_model_markdown,\n    score_attack_path,\n)
+from pathlib import Path
+
+from app.domain.models import FactKind, GraphNode, NodeKind, PathStepData, RelationType
+from app.domain.scoring import (
+    SCORING_VERSION,
+    render_scoring_model_markdown,
+    score_attack_path,
+)
 
 
 def _node(nid: str, *, entry: bool = False, crown: bool = False, crit: str = "medium", stale: bool = False) -> GraphNode:
