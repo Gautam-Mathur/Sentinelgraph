@@ -329,11 +329,13 @@ def evaluate_edge_preconditions(
             )
 
     if edge.relation_type in (RelationType.CONNECTS_TO, RelationType.EXPOSES):
-        if not ({"network_reachable", "acl_permitted"} & explicit_kinds):
-            outcomes.extend(_network_conditions(edge))
-        elif "network_reachable" not in edge.edge_metadata and "acl_action" in edge.edge_metadata:
-            # Still honour an independently supplied ACL deny/allow fact.
-            outcomes.extend(_network_conditions(edge))
+        if (
+            "network_reachable" in edge.edge_metadata
+            or "acl_action" in edge.edge_metadata
+            or not ({"network_reachable", "acl_permitted"} & explicit_kinds)
+        ):
+            # Evaluate every supplied routing/ACL fact, even when an explicit
+            # precondition also exists, so contradictory evidence cannot be hidden.
     elif edge.relation_type == RelationType.CAN_ADMINISTER:
         outcomes.extend(_admin_conditions(edge))
     elif edge.relation_type == RelationType.MEMBER_OF:
