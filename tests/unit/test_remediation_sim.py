@@ -197,3 +197,38 @@ def test_arbitrary_cve_is_not_applied_from_asset_id_or_open_count_alone() -> Non
     assert patched_nodes[0].open_cve_count == 4
     assert patched_nodes[0].metadata == {}
     assert patched_edges == []
+
+
+
+def test_cve_patch_decrements_all_findings_for_that_cve_only() -> None:
+    nodes = [
+        GraphNode(
+            NodeKind.ASSET,
+            "web",
+            "web",
+            open_cve_count=5,
+            metadata={
+                "vulnerability_status": {
+                    "CVE-2024-12345": "open",
+                    "CVE-2024-22222": "open",
+                },
+                "vulnerability_finding_counts": {
+                    "CVE-2024-12345": 3,
+                    "CVE-2024-22222": 2,
+                },
+            },
+        )
+    ]
+    transform = RemediationTransform(
+        transform_type=RemediationTransformType.PATCH_VULNERABILITY,
+        asset_id="web",
+        cve_id="CVE-2024-12345",
+    )
+    patched_nodes, _, applied = apply_sandbox_transforms(nodes, [], [transform])
+
+    assert applied[0]["status"] == "applied"
+    assert patched_nodes[0].open_cve_count == 2
+    assert patched_nodes[0].metadata["vulnerability_status"]["CVE-2024-12345"] == "patched"
+    assert patched_nodes[0].metadata["vulnerability_status"]["CVE-2024-22222"] == "open"
+    assert patched_nodes[0].metadata["vulnerability_finding_counts"]["CVE-2024-12345"] == 0
+    assert patched_nodes[0].metadata["vulnerability_finding_counts"]["CVE-2024-22222"] == 2
