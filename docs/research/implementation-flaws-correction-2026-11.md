@@ -2,7 +2,7 @@
 
 This note records three analytical-integrity corrections made against the main baseline `ff24df635d76c7ec8c5a3849bbddee86b1ddb526`.
 
-The changes are proposed on branch `fix/research-data-test-flaws-2026-11`; they are not a claim that the branch has been merged or passed CI.
+The changes are on branch `fix/research-data-test-flaws-2026-11` in pull request #4. The implementation/test commit `2026607a10a18e46fa7a8c0b096cd48829c37450` passed GitHub Actions run #21: Ruff, backend migration/seed, 75 unit/integration/security/performance tests, frontend build, and Docker Compose validation. The pull request remains open and unmerged.
 
 ## 1. Candidate budget versus final priority order
 
@@ -54,4 +54,4 @@ New/updated unit tests:
 
 ## Validation boundary
 
-These are source-level corrections and tests. The independent CSVs are synthetic research artifacts and do not execute the product. Do not claim the correction branch is CI-verified until the branch's GitHub Actions run passes. The branch needs review and merge before these changes become the `main` implementation.
+These are source-level corrections and tests. The independent CSVs are synthetic research artifacts and do not execute the product. GitHub Actions run #21 passed for implementation/test commit `2026607a10a18e46fa7a8c0b096cd48829c37450` (Ruff, backend database setup, 75 tests, frontend build, Compose validation). The PR still needs review and merge before these changes become the `main` implementation.
