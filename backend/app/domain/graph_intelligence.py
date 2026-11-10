@@ -872,7 +872,9 @@ def analyze_single_path_intelligence(
         as_of=constraints.as_of,
     )
     g_live, _ = build_networkx_graph(nodes, edges, as_of=constraints.as_of)
-    same_pair_paths = find_attack_paths(g_live, pair_constraints).paths
+    same_pair_out = find_attack_paths(g_live, pair_constraints)
+    same_pair_paths = same_pair_out.paths
+    same_pair_reachability = verify_reachability(g_live, pair_constraints)
 
     blast_map: dict[str, dict[str, Any]] = full_intel["edge_blast_radius"]
 
@@ -897,23 +899,48 @@ def analyze_single_path_intelligence(
 
         # Counterfactual removal of this single edge
         if rel_id in live_edge_map:
-            pair_after = _paths_covered_without_edges(nodes, edges, pair_constraints, {rel_id})
+            pair_after_edges = [edge for edge in edges if edge.edge_id != rel_id]
+            pair_after_graph, _ = build_networkx_graph(
+                nodes, pair_after_edges, as_of=pair_constraints.as_of
+            )
+            pair_after_out = find_attack_paths(pair_after_graph, pair_constraints)
+            pair_after = pair_after_out.paths
+            pair_after_reachability = verify_reachability(
+                pair_after_graph, pair_constraints
+            )
             assess_after_info = blast_map.get(rel_id)
-            assess_rem = (
-                int(assess_after_info["residual_paths_if_cut"])
-                if assess_after_info
-                else len(
-                    _paths_covered_without_edges(
-                        nodes, edges, replace(constraints, top_k=50), {rel_id}
-                    )
+            if assess_after_info:
+                assess_rem = int(assess_after_info["residual_paths_if_cut"])
+                assessment_reachable_remaining = bool(
+                    assess_after_info["residual_reachable"]
                 )
-            )
-            assess_hits = (
-                int(assess_after_info["paths_traversed_count"]) if assess_after_info else 1
-            )
+                assessment_reachability_complete = bool(
+                    assess_after_info["reachability_verification_complete"]
+                )
+                assess_hits = int(assess_after_info["paths_traversed_count"])
+            else:
+                assessment_graph, _ = build_networkx_graph(
+                    nodes, pair_after_edges, as_of=constraints.as_of
+                )
+                assessment_after = verify_reachability(assessment_graph, constraints)
+                assessment_reachable_remaining = assessment_after.reachable_unbounded
+                assessment_reachability_complete = assessment_after.complete
+                assess_rem = len(
+                    _paths_covered_without_edges(nodes, edges, constraints, {rel_id})
+                )
+                assess_hits = 1
         else:
             pair_after = same_pair_paths
+            pair_after_out = same_pair_out
+            pair_after_reachability = same_pair_reachability
             assess_rem = len(full_intel["paths_overlay"])
+            baseline_reachability = bool(
+                full_intel["summary"]["baseline_possible_reachability"]
+            )
+            assessment_reachable_remaining = baseline_reachability
+            assessment_reachability_complete = bool(
+                full_intel["summary"]["reachability_verification_complete"]
+            )
             assess_hits = 0
 
         bypasses_preview = [
@@ -925,13 +952,28 @@ def analyze_single_path_intelligence(
             "relationship_id": rel_id,
             "transition": f"{st['from_node_label']} --[{st['relation_type']}]--> {st['to_node_label']}",
             "this_path_eliminated": rel_id in live_edge_map,
+            # Route counts below are candidate-enumeration counts, not total route counts.
             "same_pair_bypasses_remaining": len(pair_after),
+            "same_pair_path_search_complete": not pair_after_out.is_truncated,
+            "same_pair_reachability_status": pair_after_reachability.status,
+            "same_pair_reachable": pair_after_reachability.reachable_unbounded,
+            "same_pair_reachability_verification_complete": pair_after_reachability.complete,
             "bypass_routes_preview": bypasses_preview,
             "assessment_paths_broken": assess_hits,
             "assessment_paths_remaining": assess_rem,
-            "is_pair_bridge_chokepoint": len(pair_after) == 0 and rel_id in live_edge_map,
-            "is_assessment_chokepoint": assess_rem == 0
-            and int(full_intel["summary"]["total_active_paths"]) > 0,
+            "assessment_reachable_remaining": assessment_reachable_remaining,
+            "assessment_reachability_verification_complete": assessment_reachability_complete,
+            "is_pair_bridge_chokepoint": (
+                not pair_after_reachability.reachable_unbounded
+                and pair_after_reachability.complete
+                and rel_id in live_edge_map
+            ),
+            "is_assessment_chokepoint": (
+                not assessment_reachable_remaining
+                and assessment_reachability_complete
+                and rel_id in live_edge_map
+                and bool(full_intel["summary"]["baseline_possible_reachability"])
+            ),
         }
         per_step_sensitivity.append(bypass_summary)
         step_bypass_lookup[rel_id] = bypass_summary
@@ -942,6 +984,9 @@ def analyze_single_path_intelligence(
             )
             cap["paths_in_assessment_count"] = assess_hits
             cap["same_pair_bypasses_if_removed"] = len(pair_after)
+            cap["same_pair_path_search_complete"] = not pair_after_out.is_truncated
+            cap["same_pair_reachable_if_removed"] = pair_after_reachability.reachable_unbounded
+            cap["same_pair_reachability_verification_complete"] = pair_after_reachability.complete
             cap["is_pair_bridge_chokepoint"] = bypass_summary["is_pair_bridge_chokepoint"]
             cap["is_assessment_chokepoint"] = bypass_summary["is_assessment_chokepoint"]
             cap["edge_betweenness"] = blast_map.get(rel_id, {}).get("betweenness_centrality", 0.0)
@@ -951,7 +996,11 @@ def analyze_single_path_intelligence(
                 step_order=step_order, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
             )
             for a in raw_asms:
-                if len(pair_after) == 0 and rel_id in live_edge_map:
+                if (
+                    not pair_after_reachability.reachable_unbounded
+                    and pair_after_reachability.complete
+                    and rel_id in live_edge_map
+                ):
                     a["if_falsified"] = (
                         f"Disproving/blocking Step {step_order} eliminates this path with 0 alternate bypasses "
                         f"from {node_map[start_key].label if start_key in node_map else start_key} to "
@@ -981,6 +1030,9 @@ def analyze_single_path_intelligence(
                     "mechanism": st.get("narrative", ""),
                     "paths_in_assessment_count": assess_hits,
                     "same_pair_bypasses_if_removed": len(pair_after),
+                    "same_pair_path_search_complete": not pair_after_out.is_truncated,
+                    "same_pair_reachable_if_removed": pair_after_reachability.reachable_unbounded,
+                    "same_pair_reachability_verification_complete": pair_after_reachability.complete,
                     "is_pair_bridge_chokepoint": False,
                     "is_assessment_chokepoint": False,
                     "edge_betweenness": 0.0,
@@ -1147,6 +1199,10 @@ def analyze_single_path_intelligence(
             "structural_context": {
                 "total_assessment_paths": full_intel["summary"]["total_active_paths"],
                 "same_pair_total_paths": len(same_pair_paths),
+                "same_pair_path_count_semantics": "returned_candidate_count_not_total",
+                "same_pair_path_search_complete": not same_pair_out.is_truncated,
+                "same_pair_reachable": same_pair_reachability.reachable_unbounded,
+                "same_pair_reachability_verification_complete": same_pair_reachability.complete,
                 "parallel_bypass_paths_count": pair_bypasses_other,
                 "chokepoint_step_orders": chokepoint_steps,
                 "scc_cycle_count": full_intel["graph_stats"]["scc_cycle_count"],
