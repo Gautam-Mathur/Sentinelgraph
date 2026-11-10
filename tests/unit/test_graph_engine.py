@@ -120,6 +120,13 @@ def test_unknown_transition_preconditions_are_conditional_not_confirmed() -> Non
     assert verification.confirmed_reachable_unbounded is False
     assert verification.conditional_witness_edge_ids
 
+    # Reachability verification always reports possible routes, even when the
+    # caller requested confirmed-only candidate enumeration.
+    strict_verification = verify_reachability(graph, confirmed_constraints)
+    assert strict_verification.reachable_unbounded is True
+    assert strict_verification.confirmed_reachable_unbounded is False
+    assert strict_verification.conditional_witness_edge_ids
+
 
 def test_false_transition_precondition_blocks_path() -> None:
     nodes, edges = _sample_graph_data()
