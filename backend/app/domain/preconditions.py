@@ -173,6 +173,37 @@ def _admin_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
     return conditions
 
 
+def _vulnerability_condition(edge: GraphEdge) -> dict[str, Any] | None:
+    required_cve = edge.edge_metadata.get("requires_cve")
+    if not isinstance(required_cve, str) or not required_cve:
+        return None
+    cve = required_cve.upper()
+    states = edge.edge_metadata.get("vulnerability_status")
+    state = states.get(cve) if isinstance(states, dict) else None
+    remediated = edge.edge_metadata.get("remediated_cves", [])
+    if isinstance(remediated, list) and cve in {str(value).upper() for value in remediated}:
+        state = "patched"
+    normalized = str(state).lower() if state is not None else None
+    if normalized in {"patched", "mitigated", "remediated", "fixed", "closed"}:
+        status = FALSE
+    elif normalized in {"open", "unpatched", "vulnerable", "confirmed"}:
+        status = TRUE
+    else:
+        status = UNKNOWN
+    return _outcome(
+        condition_id=f"{edge.edge_id}:cve:{cve}",
+        kind="vulnerability_unpatched",
+        status=status,
+        field=f"vulnerability_status.{cve}",
+        observed_value=state,
+        expected="open/unpatched",
+        reason=(
+            f"Transition requires {cve} to remain unpatched; a patched or mitigated CVE blocks the transition."
+        ),
+        evidence_ref=edge.edge_metadata.get("vulnerability_evidence_ref"),
+    )
+
+
 def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
     """Evaluate typed transition prerequisites with true/false/unknown outcomes.
 
@@ -235,6 +266,9 @@ def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
                     evidence_ref=spec.get("evidence_ref"),
                 )
             )
+        cve_condition = _vulnerability_condition(edge)
+        if cve_condition is not None:
+            outcomes.append(cve_condition)
         return outcomes
 
     outcomes = []
@@ -283,35 +317,9 @@ def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
             )
         )
 
-    required_cve = edge.edge_metadata.get("requires_cve")
-    if isinstance(required_cve, str) and required_cve:
-        cve = required_cve.upper()
-        states = edge.edge_metadata.get("vulnerability_status")
-        state = states.get(cve) if isinstance(states, dict) else None
-        remediated = edge.edge_metadata.get("remediated_cves", [])
-        if isinstance(remediated, list) and cve in {str(v).upper() for v in remediated}:
-            state = "patched"
-        normalized = str(state).lower() if state is not None else None
-        if normalized in {"patched", "mitigated", "remediated", "fixed", "closed"}:
-            cve_status = FALSE
-        elif normalized in {"open", "unpatched", "vulnerable", "confirmed"}:
-            cve_status = TRUE
-        else:
-            cve_status = UNKNOWN
-        outcomes.append(
-            _outcome(
-                condition_id=f"{edge.edge_id}:cve:{cve}",
-                kind="vulnerability_unpatched",
-                status=cve_status,
-                field=f"vulnerability_status.{cve}",
-                observed_value=state,
-                expected="open/unpatched",
-                reason=(
-                    f"Transition requires {cve} to remain unpatched; a patched or mitigated CVE blocks the transition."
-                ),
-                evidence_ref=edge.edge_metadata.get("vulnerability_evidence_ref"),
-            )
-        )
+    cve_condition = _vulnerability_condition(edge)
+    if cve_condition is not None:
+        outcomes.append(cve_condition)
 
     return outcomes
 
