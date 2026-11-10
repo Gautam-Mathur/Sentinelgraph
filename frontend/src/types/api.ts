@@ -316,6 +316,16 @@ export interface PathStepItem {
   fact_kind: FactKind;
   confidence: number;
   preconditions: string[];
+  precondition_outcomes?: Array<{
+    condition_id: string;
+    kind: string;
+    status: "true" | "false" | "unknown";
+    field?: string | null;
+    observed_value?: unknown;
+    expected?: unknown;
+    reason: string;
+    evidence_ref?: string | null;
+  }>;
   assumptions: string[];
   evidence_refs: ProvenanceRef[];
   narrative: string;
@@ -360,12 +370,26 @@ export interface AttackPathItem {
 }
 
 export interface GraphMetricSnapshot {
+  /** Number of returned path candidates; not necessarily the total graph path count. */
   total_paths: number;
+  path_count_semantics?: string;
+  path_search_complete?: boolean;
+  path_search_truncation_reason?: string | null;
   high_confidence_paths: number;
   highest_path_score: number;
   reachable_critical_assets: number;
   reachable_critical_asset_labels: string[];
   key_bridge_nodes: BridgeNodeStat[];
+  reachability_status?: string;
+  reachable_within_max_hops?: boolean;
+  reachable_unbounded?: boolean;
+  confirmed_reachable_unbounded?: boolean;
+  reachability_verification_complete?: boolean;
+  reachable_target_keys?: string[];
+  witness_path_edge_ids?: string[];
+  conditional_witness_edge_ids?: string[];
+  reachability_examined_nodes?: number;
+  reachability_examined_edges?: number;
 }
 
 export interface RemediationItem {
@@ -383,6 +407,18 @@ export interface RemediationItem {
     critical_assets_unlinked: number;
     high_confidence_paths_reduced: number;
     disclaimer: string;
+    sampled_paths_eliminated?: number;
+    paths_eliminated_is_complete?: boolean;
+    possible_reachability_eliminated?: boolean;
+    possible_residual_reachability?: boolean;
+    confirmed_residual_reachability?: boolean;
+    reachability_verification_complete?: boolean;
+    applied_transforms?: Array<Record<string, unknown> & {
+      transform_type?: string;
+      status?: "applied" | "not_applied" | string;
+      reason?: string | null;
+      affected_elements?: number;
+    }>;
   };
   is_modelled_only: boolean;
   validation_assessment_id: string | null;
@@ -581,6 +617,11 @@ export interface EdgeBlastRadius {
   cumulative_risk_score: number;
   max_path_score: number;
   residual_paths_if_cut: number;
+  residual_paths_semantics?: string;
+  residual_reachability?: string;
+  residual_reachable?: boolean;
+  reachability_verification_complete?: boolean;
+  residual_witness_edge_ids?: string[];
   is_single_point_chokepoint: boolean;
   action_label: string;
   recommended_transform: Record<string, unknown>;
@@ -593,7 +634,20 @@ export interface CutSetRecommendation {
   effort_score: number;
   baseline_paths: number;
   paths_broken: number;
+  /** Enumerated candidate count only. Use reachability fields for disconnection claims. */
   residual_paths: number;
+  residual_paths_semantics?: string;
+  reachability_status?: string;
+  reachable_unbounded?: boolean;
+  reachable_within_max_hops?: boolean;
+  confirmed_reachable_unbounded?: boolean;
+  reachability_verification_complete?: boolean;
+  witness_path_edge_ids?: string[];
+  conditional_witness_edge_ids?: string[];
+  path_search_complete?: boolean;
+  path_search_truncation_reason?: string | null;
+  verification_status?: "MODEL_VERIFIED_CUT" | "PARTIAL_CUT" | "INDETERMINATE" | string;
+  minimum_cut_proven?: boolean;
   coverage_pct: number;
   critical_assets_unlinked: number;
   highest_score_reduction: number;
@@ -663,6 +717,17 @@ export interface CapabilityTransition {
   stage_name: string;
   mechanism: string;
   preconditions_met?: string[];
+  precondition_outcomes?: Array<{
+    condition_id: string;
+    kind: string;
+    status: "true" | "false" | "unknown";
+    reason: string;
+    evidence_ref?: string | null;
+  }>;
+  precondition_summary?: "satisfied" | "blocked" | "conditional" | string;
+  same_pair_path_search_complete?: boolean;
+  same_pair_reachable_if_removed?: boolean;
+  same_pair_reachability_verification_complete?: boolean;
   evidence_provenance?: Record<string, unknown>;
   paths_in_assessment_count: number;
   same_pair_bypasses_if_removed: number;
@@ -676,10 +741,17 @@ export interface PerStepSensitivityItem {
   relationship_id: string;
   transition: string;
   this_path_eliminated: boolean;
+  /** Candidate count only, not necessarily the total number of simple paths. */
   same_pair_bypasses_remaining: number;
+  same_pair_path_search_complete?: boolean;
+  same_pair_reachability_status?: string;
+  same_pair_reachable?: boolean;
+  same_pair_reachability_verification_complete?: boolean;
   bypass_routes_preview: string[];
   assessment_paths_broken: number;
   assessment_paths_remaining: number;
+  assessment_reachable_remaining?: boolean;
+  assessment_reachability_verification_complete?: boolean;
   is_pair_bridge_chokepoint: boolean;
   is_assessment_chokepoint: boolean;
 }
@@ -690,10 +762,22 @@ export interface AssessmentIntelligenceResponse {
   graph_version: number;
   graph_stats: AssessmentItem["graph_stats"];
   summary: {
+    /** Legacy count of returned candidates, not necessarily all graph paths. */
     total_active_paths: number;
+    path_count_semantics?: string;
+    path_search_complete?: boolean;
+    path_search_truncation_reason?: string | null;
+    baseline_possible_reachability?: boolean;
+    baseline_reachable_within_max_hops?: boolean;
+    baseline_confirmed_reachability?: boolean;
+    reachability_verification_complete?: boolean;
+    reachable_target_keys?: string[];
     reachable_crown_jewels: string[];
     single_point_chokepoints_count: number;
+    /** Deprecated: always null until a globally optimal cut is actually proven. */
     min_cut_size: number | null;
+    candidate_cut_size?: number | null;
+    minimum_cut_proven?: boolean;
     inferred_dependent_paths: number;
     observed_only_paths: number;
     uncorroborated_acl_edges: number;
@@ -716,7 +800,12 @@ export interface PathIntelligenceResponse {
     capability_chain: CapabilityTransition[];
     structural_context: {
       total_assessment_paths: number;
+      /** Candidate route count returned by bounded path enumeration. */
       same_pair_total_paths: number;
+      same_pair_path_count_semantics?: string;
+      same_pair_path_search_complete?: boolean;
+      same_pair_reachable?: boolean;
+      same_pair_reachability_verification_complete?: boolean;
       parallel_bypass_paths_count: number;
       chokepoint_step_orders: number[];
       scc_cycle_count: number;

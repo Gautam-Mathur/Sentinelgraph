@@ -1,43 +1,80 @@
 # SentinelGraph Scoring Model (`v1.0.0`)
 
-## Methodology & Non-Probability Guarantee
+<!-- GENERATED FILE: edit ScoringModelConfig in backend/app/domain/scoring.py, not this file. -->
 
-SentinelGraph's priority score is a **deterministic, normalised remediation triage ranking on `[0, 100]`**.
+## Purpose and non-probability guarantee
 
-> **Important:** `priority_score` is **NOT** a statistical breach probability, exploit likelihood percentage, or SLA prediction.
+The priority score is a deterministic, normalised remediation-triage ranking on
+[`0, 100`]. It is **not** a breach probability,
+exploit-likelihood percentage, prediction of compromise, or SLA estimate.
 
----
+> Weighted, normalised priority ranking (0-100) for remediation triage. Not a calibrated statistical probability of breach.
 
-## Published Formula (`scoring_version = "v1.0.0"`)
+## Published formula
 
 ```text
-raw_score = 100.0 * impact_weight * exposure_factor * privilege_factor * evidence_confidence * missing_data_penalty
+raw_score = 100.0 * impact_weight * exposure_factor * privilege_factor
+            * evidence_confidence * missing_data_penalty
 priority_score = round(clamp(0.0, 100.0, raw_score), 2)
 ```
 
-### Component Definitions
+The implementation and this document share one typed configuration:
+`SCORING_MODEL` in `backend/app/domain/scoring.py`. The rendered values below are
+not a second, hand-maintained scoring specification.
 
-1. **`impact_weight`** (`0.25 .. 1.00`):
-   - Derived from target node criticality & crown-jewel designation:
-     - `critical` / `is_crown_jewel=True`: `1.00`
-     - `high`: `0.80`
-     - `medium`: `0.55`
-     - `low`: `0.35`
-2. **`exposure_factor`** (`0.40 .. 1.00`):
-   - Base exposure from entry node reachability (`0.95` when `is_external_entry=True`, else `0.70`), adjusted by hop decay `0.95 ** max(0, hop_count - 1)`.
-3. **`privilege_factor`** (`0.60 .. 1.00`):
-   - Reflects privilege escalation / administration transitions present on the path (`1.00` when path includes `CAN_ADMINISTER` or admin privileges, `0.85` for `CAN_ASSUME`/`MEMBER_OF`, `0.70` otherwise).
-4. **`evidence_confidence`** (`0.05 .. 1.00`):
-   - Weighted geometric mean / attenuated product across step edge confidences (`0.05 .. 1.0`), with explicit attenuation (`× 0.85` factor per `inferred_relationship` step) so unconfirmed inferences never outrank hard observed facts.
-5. **`missing_data_penalty`** (`0.70 .. 1.00`):
-   - Applies explicit completeness deductions (e.g., missing banner versions, missing observation timestamps, unverified host ownership metadata).
+## Component definitions
 
----
+### 1. Impact weight
 
-## Reproducibility
+- Clamp range: [0.25, 1.00].
+- Target criticality weights:
 
-Every persisted `AttackPath` stores:
-- `scoring_version` (`"v1.0.0"`)
-- Individual component values (`impact_weight`, `exposure_factor`, `privilege_factor`, `evidence_confidence`, `missing_data_penalty`)
-- `determinism_hash` (SHA-256 of canonical ordered edges & algorithm parameters)
-- Explicit `assumptions` and `"is_probability": false` inside `explanation_trace.scoring`.
+| Criticality | Weight |
+|---|---:|
+| `critical` | 1.00 |
+| `high` | 0.80 |
+| `medium` | 0.50 |
+| `low` | 0.25 |
+- Unknown criticality falls back to `0.50`.
+- Crown-jewel designation overrides the weight to `1.00`.
+- A target with `privilege_level == "domain_admin"` receives at least `0.95`.
+
+### 2. Exposure factor
+
+- External-entry start: `1.00`.
+- Other start: `0.60`.
+- If a non-external start has an `EXPOSES` or `CONNECTS_TO` step, its starting exposure is at least `0.72`.
+- Hop attenuation: `max(0.45, 1.0 - 0.06 * max(0, hop_count - 1))`.
+- Final clamp range: [0.35, 1.00].
+
+### 3. Privilege factor
+
+- Base: `0.62`; clamp range [0.40, 1.00].
+- `CAN_ADMINISTER`: at least `1.00`.
+- `HAS_ROLE` or `TRUSTS`: at least `0.85`.
+- `MEMBER_OF`: at least `0.75`.
+- A node with privilege level `privileged` or `domain_admin`: at least `0.90`.
+
+### 4. Evidence confidence
+
+- Each edge confidence is clamped to [0.05, 1.00].
+- The combined value is `0.50 * minimum_edge_confidence + 0.50 * arithmetic_mean_edge_confidence`.
+- Each inferred relationship applies attenuation `0.88 ** inferred_edge_count`, with a minimum multiplier of `0.50`.
+- Final clamp range: [0.10, 1.00].
+
+### 5. Missing-data penalty
+
+- Start at `1.00`.
+- Stale nodes multiply by `0.92 ** stale_node_count`.
+- Steps missing corroboration multiply by `0.90 ** uncorroborated_step_count`.
+- Each category's multiplier is floored at `0.65`; final clamp range is [0.50, 1.00].
+
+## Reproducibility and interpretation
+
+Each path stores the scoring version, component values, formula, and
+`is_probability: false` in its explanation trace. Determinism hashes include the
+scoring version. Changing any scoring constant or calculation requires an intentional
+version decision and regression review.
+
+The score is a heuristic ranking for triage. It has not been calibrated to empirical
+breach frequencies and must not be interpreted as a probability.

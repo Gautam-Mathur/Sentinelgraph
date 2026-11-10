@@ -155,6 +155,9 @@ class PathSearchConstraints:
     timeout_seconds: float = 5.0
     include_inferred: bool = True
     as_of: datetime | None = None
+    # True keeps unknown transitions as explicitly conditional hypotheses.
+    # False requires every executable precondition to be known true.
+    allow_unknown_preconditions: bool = True
 
 
 @dataclass
@@ -175,6 +178,7 @@ class PathStepData:
     evidence_refs: list[dict[str, Any]]
     narrative: str
     missing_corroboration: bool = False
+    precondition_outcomes: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

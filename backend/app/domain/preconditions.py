@@ -1,0 +1,407 @@
+from __future__ import annotations
+
+from typing import Any
+
+from app.domain.models import GraphEdge, GraphNode, RelationType
+
+TRUE = "true"
+FALSE = "false"
+UNKNOWN = "unknown"
+_VALID_STATUSES = {TRUE, FALSE, UNKNOWN}
+
+
+def _field_value(metadata: dict[str, Any], field: str) -> Any:
+    value: Any = metadata
+    for part in field.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _status_from_value(value: Any, expected: Any = True) -> str:
+    if value is None:
+        return UNKNOWN
+    if isinstance(expected, list):
+        return TRUE if value in expected else FALSE
+    return TRUE if value == expected else FALSE
+
+
+def _outcome(
+    *,
+    condition_id: str,
+    kind: str,
+    status: str,
+    field: str | None = None,
+    observed_value: Any = None,
+    expected: Any = True,
+    reason: str | None = None,
+    evidence_ref: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "condition_id": condition_id,
+        "kind": kind,
+        "status": status if status in _VALID_STATUSES else UNKNOWN,
+        "field": field,
+        "observed_value": observed_value,
+        "expected": expected,
+        "reason": reason
+        or (
+            f"Requires {field} to match the expected value."
+            if field
+            else "Explicit transition precondition supplied by the evidence record."
+        ),
+        "evidence_ref": evidence_ref,
+    }
+
+
+def _field_condition(
+    edge: GraphEdge,
+    *,
+    condition_id: str,
+    kind: str,
+    field: str,
+    expected: Any = True,
+    reason: str | None = None,
+) -> dict[str, Any]:
+    value = _field_value(edge.edge_metadata, field)
+    return _outcome(
+        condition_id=condition_id,
+        kind=kind,
+        status=_status_from_value(value, expected),
+        field=field,
+        observed_value=value,
+        expected=expected,
+        reason=reason,
+    )
+
+
+def _network_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
+    metadata = edge.edge_metadata
+    conditions: list[dict[str, Any]] = []
+    if "network_reachable" in metadata:
+        conditions.append(
+            _field_condition(
+                edge,
+                condition_id=f"{edge.edge_id}:network-reachable",
+                kind="network_reachable",
+                field="network_reachable",
+                reason="Network path must be permitted by routing and packet-filter policy.",
+            )
+        )
+
+    action = metadata.get("acl_action")
+    if isinstance(action, str):
+        normalized = action.strip().lower()
+        if normalized in {"allow", "permit", "accept"}:
+            status = TRUE
+        elif normalized in {"deny", "block", "drop", "reject"}:
+            status = FALSE
+        else:
+            status = UNKNOWN
+        conditions.append(
+            _outcome(
+                condition_id=f"{edge.edge_id}:acl-action",
+                kind="network_reachable",
+                status=status,
+                field="acl_action",
+                observed_value=action,
+                expected=["allow", "permit", "accept"],
+                reason="ACL action must permit the source-to-target flow.",
+                evidence_ref=str(metadata.get("acl_rule") or "") or None,
+            )
+        )
+
+    if not conditions:
+        conditions.append(
+            _outcome(
+                condition_id=f"{edge.edge_id}:network-reachable",
+                kind="network_reachable",
+                status=UNKNOWN,
+                field="network_reachable",
+                reason="No explicit network reachability or ACL action evidence is attached to this relationship.",
+                evidence_ref=str(metadata.get("acl_rule") or "") or None,
+            )
+        )
+    return conditions
+
+def _admin_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
+    metadata = edge.edge_metadata
+    conditions = [
+        _field_condition(
+            edge,
+            condition_id=f"{edge.edge_id}:admin-enabled",
+            kind="standing_admin_right_active",
+            field="admin_enabled" if "admin_enabled" in metadata else "standing_admin_enabled",
+            reason="The administrative right must be active for this transition.",
+        )
+        if ("admin_enabled" in metadata or "standing_admin_enabled" in metadata)
+        else _outcome(
+            condition_id=f"{edge.edge_id}:admin-enabled",
+            kind="standing_admin_right_active",
+            status=UNKNOWN,
+            field="admin_enabled",
+            reason="The edge records an administrative relationship but does not state whether the right is currently active.",
+        )
+    ]
+
+    for gate, required_key, satisfied_key in (
+        ("pam", "pam_enforced", "pam_approval_granted"),
+        ("mfa", "mfa_required", "mfa_satisfied"),
+    ):
+        if required_key not in metadata:
+            conditions.append(
+                _outcome(
+                    condition_id=f"{edge.edge_id}:{gate}-gate",
+                    kind=f"{gate}_gate",
+                    status=UNKNOWN,
+                    field=required_key,
+                    reason=f"It is unknown whether the {gate.upper()} gate is enforced for this transition.",
+                )
+            )
+        elif metadata.get(required_key) is False:
+            conditions.append(
+                _outcome(
+                    condition_id=f"{edge.edge_id}:{gate}-gate",
+                    kind=f"{gate}_gate",
+                    status=TRUE,
+                    field=required_key,
+                    observed_value=False,
+                    reason=f"{gate.upper()} is explicitly not required for this transition.",
+                )
+            )
+        else:
+            conditions.append(
+                _field_condition(
+                    edge,
+                    condition_id=f"{edge.edge_id}:{gate}-gate",
+                    kind=f"{gate}_gate",
+                    field=satisfied_key,
+                    reason=f"{gate.upper()} approval/satisfaction must be present when the gate is enforced.",
+                )
+            )
+    return conditions
+
+
+def _vulnerability_condition(
+    edge: GraphEdge,
+    source_node: GraphNode | None = None,
+    target_node: GraphNode | None = None,
+) -> dict[str, Any] | None:
+    required_cve = edge.edge_metadata.get("requires_cve")
+    if not isinstance(required_cve, str) or not required_cve:
+        return None
+    cve = required_cve.upper()
+    sources: list[Any] = []
+
+    def add_state(metadata: dict[str, Any], *, state_field: str, remediated_field: str) -> None:
+        states = metadata.get(state_field)
+        if isinstance(states, dict):
+            sources.extend(
+                value for key, value in states.items() if str(key).upper() == cve
+            )
+        remediated = metadata.get(remediated_field, [])
+        if isinstance(remediated, list) and any(
+            str(value).upper() == cve for value in remediated
+        ):
+            sources.append("patched")
+
+    add_state(
+        edge.edge_metadata,
+        state_field="vulnerability_status",
+        remediated_field="remediated_cves",
+    )
+    required_scope = str(edge.edge_metadata.get("requires_cve_on") or "").lower()
+    scoped_nodes = (
+        [source_node]
+        if required_scope == "source"
+        else [target_node]
+        if required_scope == "target"
+        else [source_node, target_node]
+    )
+    for node in scoped_nodes:
+        if node is not None and isinstance(node.metadata, dict):
+            add_state(
+                node.metadata,
+                state_field="vulnerability_status",
+                remediated_field="remediated_cves",
+            )
+
+    normalized = {str(value).strip().lower() for value in sources}
+    active_states = {"open", "unpatched", "vulnerable", "confirmed"}
+    patched_states = {"patched", "mitigated", "remediated", "fixed", "closed"}
+    has_active = bool(normalized & active_states)
+    has_patched = bool(normalized & patched_states)
+    if has_active and has_patched:
+        status = UNKNOWN
+        reason = (
+            f"Conflicting evidence exists for {cve}: at least one source says open "
+            "and another says patched or remediated."
+        )
+    elif has_active:
+        status = TRUE
+        reason = f"Evidence records {cve} as open/unpatched on the relationship or a scoped endpoint."
+    elif has_patched:
+        status = FALSE
+        reason = f"Evidence records {cve} as patched or remediated on the relationship or scoped endpoint."
+    else:
+        status = UNKNOWN
+        reason = f"No CVE-specific state for {cve} is available on the relationship or scoped endpoints."
+
+    return _outcome(
+        condition_id=f"{edge.edge_id}:cve:{cve}",
+        kind="vulnerability_unpatched",
+        status=status,
+        field=f"vulnerability_status.{cve}",
+        observed_value=sorted(normalized),
+        expected="open/unpatched",
+        reason=reason,
+        evidence_ref=edge.edge_metadata.get("vulnerability_evidence_ref"),
+    )
+
+def evaluate_edge_preconditions(
+    edge: GraphEdge,
+    source_node: GraphNode | None = None,
+    target_node: GraphNode | None = None,
+) -> list[dict[str, Any]]:
+    """Evaluate explicit and relationship-specific transition prerequisites.
+
+    Explicit requirements are additive. They do not bypass mandatory relationship
+    gates or a requires_cve prerequisite. A typed explicit requirement may satisfy
+    the corresponding built-in gate; missing evidence remains unknown.
+    """
+    outcomes: list[dict[str, Any]] = []
+    explicit = edge.edge_metadata.get("preconditions")
+    explicit_kinds: set[str] = set()
+    if isinstance(explicit, list):
+        for index, spec in enumerate(explicit):
+            if not isinstance(spec, dict):
+                outcomes.append(
+                    _outcome(
+                        condition_id=f"{edge.edge_id}:explicit-{index}",
+                        kind="invalid_precondition",
+                        status=UNKNOWN,
+                        reason="Malformed precondition entry; analyst review is required.",
+                    )
+                )
+                continue
+            kind = str(spec.get("kind") or spec.get("type") or "custom")
+            explicit_kinds.add(kind)
+            condition_id = str(spec.get("id") or f"{edge.edge_id}:{kind}:{index}")
+            raw_status = spec.get("status")
+            if isinstance(raw_status, bool):
+                status = TRUE if raw_status else FALSE
+                outcomes.append(
+                    _outcome(
+                        condition_id=condition_id,
+                        kind=kind,
+                        status=status,
+                        reason=str(spec.get("reason") or "Explicit boolean precondition status."),
+                        evidence_ref=spec.get("evidence_ref"),
+                    )
+                )
+                continue
+            field = spec.get("field")
+            if isinstance(field, str) and field:
+                value = _field_value(edge.edge_metadata, field)
+                expected = spec.get("expected", True)
+                outcomes.append(
+                    _outcome(
+                        condition_id=condition_id,
+                        kind=kind,
+                        status=_status_from_value(value, expected),
+                        field=field,
+                        observed_value=value,
+                        expected=expected,
+                        reason=str(spec.get("reason") or f"Requires {field} to match its expected value."),
+                        evidence_ref=spec.get("evidence_ref"),
+                    )
+                )
+                continue
+            outcomes.append(
+                _outcome(
+                    condition_id=condition_id,
+                    kind=kind,
+                    status=UNKNOWN,
+                    reason="Precondition has neither an explicit status nor a metadata field to evaluate.",
+                    evidence_ref=spec.get("evidence_ref"),
+                )
+            )
+
+    if edge.relation_type in (RelationType.CONNECTS_TO, RelationType.EXPOSES):
+        if (
+            "network_reachable" in edge.edge_metadata
+            or "acl_action" in edge.edge_metadata
+            or not ({"network_reachable", "acl_permitted"} & explicit_kinds)
+        ):
+            # Evaluate every supplied routing/ACL fact, even when an explicit
+            # precondition also exists, so contradictory evidence cannot be hidden.
+            outcomes.extend(_network_conditions(edge))
+    elif edge.relation_type == RelationType.CAN_ADMINISTER:
+        outcomes.extend(_admin_conditions(edge))
+    elif edge.relation_type == RelationType.MEMBER_OF:
+        outcomes.append(
+            _field_condition(
+                edge,
+                condition_id=f"{edge.edge_id}:membership-active",
+                kind="membership_active",
+                field="membership_active",
+                reason="Directory/IAM membership must be enabled and unrevoked.",
+            )
+        )
+    elif edge.relation_type == RelationType.HAS_ROLE:
+        outcomes.append(
+            _field_condition(
+                edge,
+                condition_id=f"{edge.edge_id}:credential-available",
+                kind="credential_available",
+                field="credential_available",
+                reason="The required role credentials or invocation context must be available.",
+            )
+        )
+    elif edge.relation_type == RelationType.TRUSTS:
+        outcomes.append(
+            _field_condition(
+                edge,
+                condition_id=f"{edge.edge_id}:trust-accepts-token",
+                kind="trust_accepts_token",
+                field="trust_accepts_token",
+                reason="The receiving trust boundary must accept the relevant token or session.",
+            )
+        )
+    elif edge.relation_type == RelationType.RUNS_SERVICE:
+        outcomes.append(
+            _field_condition(
+                edge,
+                condition_id=f"{edge.edge_id}:service-listening",
+                kind="service_listening",
+                field="service_listening",
+                reason="The target service must be active and listening.",
+            )
+        )
+
+    cve_condition = _vulnerability_condition(edge, source_node, target_node)
+    if cve_condition is not None:
+        outcomes.append(cve_condition)
+
+    return outcomes
+
+def edge_preconditions_allow(
+    edge: GraphEdge,
+    *,
+    allow_unknown: bool = True,
+    source_node: GraphNode | None = None,
+    target_node: GraphNode | None = None,
+) -> bool:
+    outcomes = evaluate_edge_preconditions(edge, source_node, target_node)
+    if any(item["status"] == FALSE for item in outcomes):
+        return False
+    return allow_unknown or not any(item["status"] == UNKNOWN for item in outcomes)
+
+
+def precondition_summary(outcomes: list[dict[str, Any]]) -> str:
+    if any(item["status"] == FALSE for item in outcomes):
+        return "blocked"
+    if any(item["status"] == UNKNOWN for item in outcomes):
+        return "conditional"
+    return "satisfied"

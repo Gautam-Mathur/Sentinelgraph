@@ -1,5 +1,11 @@
+from pathlib import Path
+
 from app.domain.models import FactKind, GraphNode, NodeKind, PathStepData, RelationType
-from app.domain.scoring import SCORING_VERSION, score_attack_path
+from app.domain.scoring import (
+    SCORING_VERSION,
+    render_scoring_model_markdown,
+    score_attack_path,
+)
 
 
 def _node(nid: str, *, entry: bool = False, crown: bool = False, crit: str = "medium", stale: bool = False) -> GraphNode:
@@ -73,3 +79,10 @@ def test_inferred_and_missing_data_penalties_reduce_score() -> None:
     assert inf_score.evidence_confidence < obs_score.evidence_confidence
     assert inf_score.missing_data_penalty < obs_score.missing_data_penalty
     assert inf_score.priority_score < obs_score.priority_score
+
+
+
+def test_published_scoring_document_is_generated_from_runtime_contract() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    document = (repo_root / "docs" / "scoring-model.md").read_text(encoding="utf-8")
+    assert document == render_scoring_model_markdown()

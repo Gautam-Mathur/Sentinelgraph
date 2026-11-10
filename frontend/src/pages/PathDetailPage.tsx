@@ -125,7 +125,7 @@ export const PathDetailPage: React.FC = () => {
       });
       setSimResult(sim);
       setStatusMsg(
-        `Simulated "${rec.label}": baseline ${sim.baseline_metrics.total_paths} -> ${sim.modelled_metrics.total_paths} paths (-${sim.delta_summary.paths_eliminated} eliminated).`
+        `Simulated "${rec.label}": baseline ${sim.baseline_metrics.total_paths} -> ${sim.modelled_metrics.total_paths} enumerated candidates (-${sim.delta_summary.paths_eliminated}). ${sim.modelled_metrics.reachable_unbounded === true ? "A possible residual route remains." : sim.modelled_metrics.reachability_verification_complete === true ? "No possible route remains in the sandbox model." : "Reachability is unknown."}`
       );
     } catch (err) {
       setError(err);
@@ -149,8 +149,15 @@ export const PathDetailPage: React.FC = () => {
       baseline_paths: blast?.total_paths ?? 1,
       paths_broken: blast?.paths_traversed_count ?? 1,
       residual_paths: blast?.residual_paths_if_cut ?? 0,
+      reachable_unbounded: blast?.residual_reachable,
+      reachability_verification_complete: blast?.reachability_verification_complete,
+      verification_status: blast?.reachability_verification_complete
+        ? blast?.residual_reachable ? "PARTIAL_CUT" : "MODEL_VERIFIED_CUT"
+        : "INDETERMINATE",
+      minimum_cut_proven: false,
       coverage_pct: blast?.path_coverage_pct ?? 100,
-      critical_assets_unlinked: blast?.residual_paths_if_cut === 0 ? 1 : 0,
+      critical_assets_unlinked:
+        blast?.residual_reachable === false && blast?.reachability_verification_complete === true ? 1 : 0,
       highest_score_reduction: 0,
       edge_ids: [edge.edge_id],
       steps_summary: [edge.relation_type],
@@ -309,13 +316,13 @@ export const PathDetailPage: React.FC = () => {
 
                           <div className="intel-summary-grid">
                             <div className="intel-metric-tile">
-                              <div className="intel-metric-label">Same Entry→Target Routes</div>
+                              <div className="intel-metric-label">Same Entry→Target Candidates</div>
                               <div className="intel-metric-val">
                                 {intel.why_exists.structural_context.same_pair_total_paths}
                               </div>
                             </div>
                             <div className="intel-metric-tile">
-                              <div className="intel-metric-label">Parallel Bypasses</div>
+                              <div className="intel-metric-label">Parallel Bypass Candidates</div>
                               <div className="intel-metric-val">
                                 {intel.why_exists.structural_context.parallel_bypass_paths_count}
                               </div>
@@ -331,12 +338,18 @@ export const PathDetailPage: React.FC = () => {
                               </div>
                             </div>
                             <div className="intel-metric-tile">
-                              <div className="intel-metric-label">Assessment Paths</div>
+                              <div className="intel-metric-label">Assessment Path Candidates</div>
                               <div className="intel-metric-val">
                                 {intel.why_exists.structural_context.total_assessment_paths}
                               </div>
                             </div>
                           </div>
+
+                          <p className="muted" style={{ fontSize: "0.83rem", margin: 0 }}>
+                            Candidate counts are bounded enumerations. Pairwise chokepoint flags use independent BFS reachability checks.
+                            Pair search complete: {intel.why_exists.structural_context.same_pair_path_search_complete ? "Yes" : "No"} ·
+                            Reachable route remains: {intel.why_exists.structural_context.same_pair_reachable ? "Yes" : "No"}
+                          </p>
 
                           <div className="chain-timeline">
                             {intel.why_exists.capability_chain.map((cap) => (
@@ -466,8 +479,8 @@ export const PathDetailPage: React.FC = () => {
                               <thead>
                                 <tr>
                                   <th scope="col">Step Transition</th>
-                                  <th scope="col">Same-Pair Bypasses</th>
-                                  <th scope="col">Assessment Paths Remaining</th>
+                                  <th scope="col">Same-Pair Bypass Candidates / Reachability</th>
+                                  <th scope="col">Assessment Path Candidates / Reachability</th>
                                   <th scope="col">Bypass Routes If Cut</th>
                                 </tr>
                               </thead>
@@ -482,18 +495,22 @@ export const PathDetailPage: React.FC = () => {
                                         <span className="badge badge-critical">0 (Chokepoint)</span>
                                       ) : (
                                         <span className="badge badge-medium">
-                                          {ps.same_pair_bypasses_remaining} bypass(es)
+                                          {ps.same_pair_bypasses_remaining} candidate(s); route remains: {ps.same_pair_reachable ? "Yes" : ps.same_pair_reachability_verification_complete ? "No" : "Unknown"}
                                         </span>
                                       )}
                                     </td>
                                     <td data-label="Assessment Paths Remaining">
-                                      {ps.assessment_paths_remaining} remaining (-
-                                      {ps.assessment_paths_broken} broken)
+                                      {ps.assessment_paths_remaining} candidate(s) remaining (-
+                                      {ps.assessment_paths_broken} traversed by this edge); possible route: {ps.assessment_reachable_remaining ? "Yes" : ps.assessment_reachability_verification_complete ? "No" : "Unknown"}
                                     </td>
                                     <td data-label="Bypass Routes If Cut" className="mono">
                                       {ps.bypass_routes_preview.length > 0
                                         ? ps.bypass_routes_preview.join(" | ")
-                                        : "All same-pair routes eliminated"}
+                                        : ps.same_pair_reachable
+                                          ? "No enumerated preview; a possible route remains"
+                                          : ps.same_pair_reachability_verification_complete
+                                            ? "BFS found no possible same-pair route"
+                                            : "No route preview; reachability unknown"}
                                     </td>
                                   </tr>
                                 ))}

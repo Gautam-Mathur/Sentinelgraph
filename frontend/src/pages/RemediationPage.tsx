@@ -78,7 +78,7 @@ export const RemediationPage: React.FC = () => {
         },
       });
       setNotice(
-        `Simulated "${sim.name}": eliminated ${sim.delta_summary.paths_eliminated} paths (score delta -${sim.delta_summary.highest_score_reduction}).`
+        `Simulated "${sim.name}": eliminated ${sim.delta_summary.paths_eliminated} enumerated path candidates (score delta -${sim.delta_summary.highest_score_reduction}). ${sim.modelled_metrics.reachable_unbounded === true ? "A possible residual route remains." : sim.modelled_metrics.reachability_verification_complete === true ? "No possible route remains in the sandbox model." : "Reachability is unknown for this saved simulation."}`
       );
       await loadAll();
     } catch (err) {
@@ -124,7 +124,7 @@ export const RemediationPage: React.FC = () => {
         },
       });
       setNotice(
-        `Simulated "${sim.name}": eliminated ${sim.delta_summary.paths_eliminated} paths (score delta -${sim.delta_summary.highest_score_reduction}).`
+        `Simulated "${sim.name}": eliminated ${sim.delta_summary.paths_eliminated} enumerated path candidates (score delta -${sim.delta_summary.highest_score_reduction}). ${sim.modelled_metrics.reachable_unbounded ? "A possible residual route remains." : "No possible route remains in the sandbox model."}`
       );
       await loadAll();
     } catch (err) {
@@ -182,11 +182,11 @@ export const RemediationPage: React.FC = () => {
       {intel && intel.cut_sets.length > 0 && (
         <section className="card">
           <h2 className="card-title">
-            Graph-Solved Minimum Cut-Sets ({intel.cut_sets.length} Recommended Strategies)
+            Candidate Remediation Cuts ({intel.cut_sets.length} Strategies)
           </h2>
           <p style={{ margin: "0 0 0.75rem", color: "var(--text-secondary)", fontSize: "0.9rem" }}>
-            Automatically solved hitting-sets for <strong>{intel.assessment_name}</strong> ranked by
-            complete path elimination, cut size, and engineering effort.
+            Bounded candidate cuts for <strong>{intel.assessment_name}</strong>. Residual reachability is
+            independently checked with BFS; candidate sets are not claimed to be globally minimum.
           </p>
           <div className="form-stack">
             {intel.cut_sets.map((cut) => (
@@ -196,16 +196,21 @@ export const RemediationPage: React.FC = () => {
                     <strong>{cut.label}</strong>{" "}
                     <span
                       className={`badge ${
-                        cut.residual_paths === 0 ? "badge-success" : "badge-medium"
+                        cut.verification_status === "MODEL_VERIFIED_CUT" ? "badge-success" : "badge-medium"
                       }`}
                     >
-                      Eliminates {cut.paths_broken}/{cut.baseline_paths} paths ({cut.coverage_pct}%)
+                      Eliminates {cut.paths_broken}/{cut.baseline_paths} sampled candidates ({cut.coverage_pct}%)
                     </span>{" "}
                     <span className="badge badge-neutral">{cut.cut_size} transform(s)</span>
                   </div>
                   <p style={{ margin: "0.25rem 0", fontSize: "0.86rem", color: "var(--text-secondary)" }}>
                     {cut.rationale}
                   </p>
+                  <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+                    Model verification: <strong>{cut.verification_status ?? "INDETERMINATE"}</strong>
+                    {" · "}Possible route remains: <strong>{cut.reachable_unbounded ? "Yes" : cut.reachability_verification_complete ? "No" : "Unknown"}</strong>
+                    {" · "}Enumeration complete: <strong>{cut.path_search_complete ? "Yes" : "No"}</strong>
+                  </div>
                   <ul style={{ margin: 0, paddingInlineStart: "1.2rem", fontSize: "0.84rem" }}>
                     {cut.steps_summary.map((s, idx) => (
                       <li key={idx}>{s}</li>
@@ -375,7 +380,9 @@ export const RemediationPage: React.FC = () => {
                   }}
                 >
                   <strong>Baseline Graph</strong>
-                  <div>Total Paths: {rem.baseline_metrics.total_paths}</div>
+                  <div>Returned path candidates: {rem.baseline_metrics.total_paths}</div>
+                  <div>Candidate enumeration complete: {rem.baseline_metrics.path_search_complete ? "Yes" : "No"}</div>
+                  <div>Possible route remains: {rem.baseline_metrics.reachable_unbounded ? "Yes" : rem.baseline_metrics.reachability_verification_complete ? "No" : "Unknown"}</div>
                   <div>Highest Priority Score: {rem.baseline_metrics.highest_path_score}</div>
                   <div>
                     Reachable Critical Assets: {rem.baseline_metrics.reachable_critical_assets}
@@ -391,7 +398,7 @@ export const RemediationPage: React.FC = () => {
                 >
                   <strong>Modelled Post-Remediation</strong>
                   <div>
-                    Total Paths: {rem.modelled_metrics.total_paths} (
+                    Returned candidates: {rem.modelled_metrics.total_paths} (
                     <strong>-{rem.delta_summary.paths_eliminated} eliminated</strong>)
                   </div>
                   <div>
@@ -401,6 +408,9 @@ export const RemediationPage: React.FC = () => {
                   <div>
                     Critical Assets Unlinked: <strong>{rem.delta_summary.critical_assets_unlinked}</strong>
                   </div>
+                  <div>Possible route remains: <strong>{rem.modelled_metrics.reachable_unbounded ? "Yes" : rem.modelled_metrics.reachability_verification_complete ? "No" : "Unknown"}</strong></div>
+                  <div>Confirmed route remains: <strong>{rem.modelled_metrics.confirmed_reachable_unbounded ? "Yes" : "No"}</strong></div>
+                  <div>Candidate enumeration complete: <strong>{rem.modelled_metrics.path_search_complete ? "Yes" : "No"}</strong></div>
                 </div>
               </div>
 

@@ -114,12 +114,27 @@ def test_single_chokepoint_vs_parallel_branch_cut_sets() -> None:
     intel = analyze_assessment_intelligence(nodes=nodes, edges=edges, constraints=constraints)
 
     assert intel["summary"]["total_active_paths"] == 2
-    assert intel["summary"]["min_cut_size"] == 1
+    assert intel["summary"]["min_cut_size"] is None
+    assert intel["summary"]["candidate_cut_size"] == 1
+    assert intel["summary"]["minimum_cut_proven"] is False
     assert intel["summary"]["single_point_chokepoints_count"] == 1
+
+    # A deliberately tiny candidate budget must not change BFS chokepoint truth.
+    capped_intel = analyze_assessment_intelligence(
+        nodes=nodes,
+        edges=edges,
+        constraints=replace(constraints, max_candidates=1),
+    )
+    assert capped_intel["summary"]["path_search_complete"] is False
+    assert capped_intel["summary"]["baseline_possible_reachability"] is True
+    assert capped_intel["summary"]["single_point_chokepoints_count"] == 1
+    assert capped_intel["edge_blast_radius"]["e_bridge"]["residual_reachable"] is False
 
     blast = intel["edge_blast_radius"]
     assert blast["e_bridge"]["is_single_point_chokepoint"] is True
     assert blast["e_bridge"]["residual_paths_if_cut"] == 0
+    assert blast["e_bridge"]["residual_reachable"] is False
+    assert blast["e_bridge"]["reachability_verification_complete"] is True
     assert blast["e_bridge"]["recommended_transform"]["transform_type"] == "segment_network"
 
     # Parallel branch edges alone leave the alternate route alive
@@ -131,6 +146,9 @@ def test_single_chokepoint_vs_parallel_branch_cut_sets() -> None:
     top_cut = intel["cut_sets"][0]
     assert top_cut["cut_size"] == 1
     assert top_cut["residual_paths"] == 0
+    assert top_cut["verification_status"] == "MODEL_VERIFIED_CUT"
+    assert top_cut["minimum_cut_proven"] is False
+    assert top_cut["reachable_unbounded"] is False
     assert top_cut["edge_ids"] == ["e_bridge"]
 
 
@@ -158,11 +176,15 @@ def test_disjoint_parallel_branches_require_two_edge_cut_set() -> None:
 
     assert intel["summary"]["total_active_paths"] == 2
     assert intel["summary"]["single_point_chokepoints_count"] == 0
-    assert intel["summary"]["min_cut_size"] == 2
+    assert intel["summary"]["min_cut_size"] is None
+    assert intel["summary"]["candidate_cut_size"] == 2
+    assert intel["summary"]["minimum_cut_proven"] is False
 
     top_cut = intel["cut_sets"][0]
     assert top_cut["cut_size"] == 2
     assert top_cut["residual_paths"] == 0
+    assert top_cut["verification_status"] == "MODEL_VERIFIED_CUT"
+    assert top_cut["minimum_cut_proven"] is False
     assert top_cut["paths_broken"] == 2
 
     # Confirm returned cut transforms eliminate all paths under real sandbox simulation
@@ -271,6 +293,20 @@ def test_single_path_intelligence_causal_chain_bypasses_and_stale_notice() -> No
     assert p_intel["why_exists"]["structural_context"]["parallel_bypass_paths_count"] == 1
     assert p_intel["why_exists"]["structural_context"]["chokepoint_step_orders"] == [1]
 
+    capped_path_intel = analyze_single_path_intelligence(
+        nodes=nodes,
+        edges=edges,
+        constraints=replace(constraints, max_candidates=1),
+        path_steps=path_steps,
+        start_key="asset:web",
+        target_key="asset:db",
+        priority_score=84.5,
+    )
+    pair_context = capped_path_intel["why_exists"]["structural_context"]
+    assert pair_context["same_pair_path_search_complete"] is False
+    assert pair_context["same_pair_reachable"] is True
+    assert pair_context["chokepoint_step_orders"] == [1]
+
     categories = {a["category"] for a in p_intel["assumptions_register"]}
     assert "plausibility_invariant" in categories
     assert "uncorroborated_acl" in categories
@@ -302,3 +338,32 @@ def test_single_path_intelligence_causal_chain_bypasses_and_stale_notice() -> No
     )
     assert stale_intel["stale_path_notice"] is not None
     assert "suppressed" in stale_intel["stale_path_notice"]
+
+
+
+def test_bfs_witness_generates_cut_when_path_enumeration_returns_no_candidates() -> None:
+    nodes, edges = _build_diamond_with_bridge()
+    constraints = PathSearchConstraints(
+        start_node_keys=["asset:web"],
+        target_node_keys=["asset:db"],
+        max_hops=6,
+        top_k=20,
+        max_candidates=0,
+        include_inferred=True,
+    )
+
+    intel = analyze_assessment_intelligence(
+        nodes=nodes,
+        edges=edges,
+        constraints=constraints,
+    )
+
+    assert intel["summary"]["total_active_paths"] == 0
+    assert intel["summary"]["path_search_complete"] is False
+    assert intel["summary"]["baseline_possible_reachability"] is True
+    assert intel["cut_sets"]
+    first_cut = intel["cut_sets"][0]
+    assert first_cut["verification_status"] == "MODEL_VERIFIED_CUT"
+    assert first_cut["reachable_unbounded"] is False
+    assert first_cut["minimum_cut_proven"] is False
+    assert "BFS reachability witness" in first_cut["steps_summary"][0]

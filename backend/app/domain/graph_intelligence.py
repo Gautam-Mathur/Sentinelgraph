@@ -6,6 +6,7 @@ from app.domain.graph_engine import (
     GraphBuildStats,
     build_networkx_graph,
     find_attack_paths,
+    verify_reachability,
 )
 from app.domain.models import (
     AttackPathResult,
@@ -16,9 +17,9 @@ from app.domain.models import (
     RelationType,
     RemediationTransformType,
 )
+from app.domain.preconditions import evaluate_edge_preconditions, precondition_summary
 from app.domain.remediation_sim import (
     RemediationTransform,
-    apply_sandbox_transforms,
     simulate_remediation,
 )
 
@@ -153,25 +154,24 @@ def _verify_and_augment_cut_set(
         transforms=domain_txs,
     )
 
-    # Bounded bypass guard (max 2 residual augmentation steps) in case cutting edges revealed >top_k bypasses
+    # A witness-path BFS, not the bounded candidate list, drives residual-route augmentation.
+    # The guard remains intentionally bounded; any residual after it is reported as partial.
     rounds = 0
-    while sim.modelled.total_paths > 0 and rounds < 2 and len(chosen_ids) < 6:
-        sb_nodes, sb_edges, _ = apply_sandbox_transforms(
-            nodes, edges, domain_txs, min_confidence_threshold=constraints.min_confidence
+    while sim.modelled.reachable_unbounded and rounds < 2 and len(chosen_ids) < 6:
+        witness_edges = [
+            eid
+            for eid in sim.modelled.witness_path_edge_ids
+            if eid in edge_map and eid not in chosen_ids
+        ]
+        if not witness_edges:
+            break
+        best_extra = min(
+            witness_edges,
+            key=lambda eid: (
+                recommended_transform_for_edge(edge_map[eid], node_map)[2],
+                eid,
+            ),
         )
-        res_graph, _ = build_networkx_graph(sb_nodes, sb_edges, as_of=constraints.as_of)
-        res_out = find_attack_paths(res_graph, constraints)
-        if not res_out.paths:
-            break
-        # Pick edge covering most residual paths
-        freq: dict[str, int] = {}
-        for p in res_out.paths:
-            for s in p.steps:
-                if s.relationship_id in edge_map and s.relationship_id not in chosen_ids:
-                    freq[s.relationship_id] = freq.get(s.relationship_id, 0) + 1
-        if not freq:
-            break
-        best_extra = max(sorted(freq.keys()), key=lambda k: freq[k])
         chosen_ids.append(best_extra)
         tx_extra, _, _ = recommended_transform_for_edge(edge_map[best_extra], node_map)
         transforms_dicts.append(tx_extra)
@@ -201,7 +201,27 @@ def _verify_and_augment_cut_set(
                     constraints=constraints,
                     transforms=trial_txs,
                 )
-                if trial_sim.modelled.total_paths <= sim.modelled.total_paths:
+                trial_unreachable = not trial_sim.modelled.reachable_unbounded
+                current_unreachable = not sim.modelled.reachable_unbounded
+                strict_reachability_improvement = (
+                    trial_unreachable and not current_unreachable
+                )
+                both_unreachable = trial_unreachable and current_unreachable
+                comparable_complete_counts = (
+                    trial_sim.modelled.path_search_complete
+                    and sim.modelled.path_search_complete
+                    and trial_sim.modelled.total_paths <= sim.modelled.total_paths
+                )
+                reachability_no_worse = (
+                    strict_reachability_improvement
+                    or both_unreachable
+                    or (
+                        trial_sim.modelled.reachable_unbounded
+                        and sim.modelled.reachable_unbounded
+                        and comparable_complete_counts
+                    )
+                )
+                if reachability_no_worse:
                     chosen_ids = trial_ids
                     transforms_dicts = [
                         recommended_transform_for_edge(edge_map[eid], node_map)[0]
@@ -220,28 +240,47 @@ def _verify_and_augment_cut_set(
         _, lbl, eff = recommended_transform_for_edge(e_obj, node_map)
         effort_score += eff
         hits = sum(1 for p in baseline_paths if eid in _extract_path_edge_ids(p))
-        steps_summary.append(f"{lbl} (breaks {hits}/{len(baseline_paths)} active paths)")
+        if baseline_paths:
+            steps_summary.append(f"{lbl} (breaks {hits}/{len(baseline_paths)} enumerated candidates)")
+        else:
+            steps_summary.append(
+                f"{lbl} (selected from a BFS reachability witness; path enumeration returned no candidates)"
+            )
 
     base_total = sim.baseline.total_paths
     eliminated = sim.delta_summary["paths_eliminated"]
     coverage_pct = round((eliminated / base_total) * 100.0, 1) if base_total > 0 else 0.0
 
-    if len(chosen_ids) == 1 and sim.modelled.total_paths == 0:
-        label = f"Single Chokepoint: {recommended_transform_for_edge(edge_map[chosen_ids[0]], node_map)[1]}"
+    model_cut_verified = (
+        sim.modelled.reachability_verification_complete
+        and not sim.modelled.reachable_unbounded
+    )
+    if model_cut_verified and len(chosen_ids) == 1:
+        label = f"Single Model-Verified Chokepoint: {recommended_transform_for_edge(edge_map[chosen_ids[0]], node_map)[1]}"
         rationale = (
-            f"Single graph bridge edge traversed by all {base_total} attack path(s); "
-            "breaking it disconnects every critical target from external entry points."
+            "Independent multi-source BFS found no remaining possible route in the sandbox graph "
+            "after this transform, under the configured scope and transition-precondition policy. "
+            "This verifies the model only, not a live-system remediation."
         )
-    elif sim.modelled.total_paths == 0:
-        label = f"{len(chosen_ids)}-Edge Minimum Cut-Set (100% Path Elimination)"
+    elif model_cut_verified:
+        label = f"{len(chosen_ids)}-Edge Model-Verified Candidate Cut"
         rationale = (
-            f"Minimum multi-edge hitting set removing parallel/bypass routes across all {base_total} "
-            "baseline attack path(s)."
+            "Independent multi-source BFS found no remaining possible route in the sandbox graph "
+            "after these transforms. The candidate search is bounded and does not prove global "
+            "minimum cut cardinality or validate a live-system change."
         )
     else:
-        label = f"{len(chosen_ids)}-Edge Partial Cut ({coverage_pct}% paths eliminated)"
+        label = f"{len(chosen_ids)}-Edge Partial Candidate Cut ({coverage_pct}% sampled paths eliminated)"
         rationale = (
-            f"Eliminates {eliminated} of {base_total} paths; {sim.modelled.total_paths} residual route(s) require follow-on control."
+            (
+                "Path enumeration returned no candidates, but independent BFS still finds "
+                f"a possible residual route ({sim.modelled.reachability_status})."
+            )
+            if base_total == 0
+            else (
+                f"Eliminates {eliminated} of {base_total} enumerated candidate paths, but BFS still "
+                f"finds a possible residual route ({sim.modelled.reachability_status})."
+            )
         )
 
     return {
@@ -252,6 +291,22 @@ def _verify_and_augment_cut_set(
         "baseline_paths": base_total,
         "paths_broken": eliminated,
         "residual_paths": sim.modelled.total_paths,
+        "residual_paths_semantics": "enumerated_candidate_count_not_total",
+        "reachability_status": sim.modelled.reachability_status,
+        "reachable_unbounded": sim.modelled.reachable_unbounded,
+        "reachable_within_max_hops": sim.modelled.reachable_within_max_hops,
+        "confirmed_reachable_unbounded": sim.modelled.confirmed_reachable_unbounded,
+        "reachability_verification_complete": sim.modelled.reachability_verification_complete,
+        "witness_path_edge_ids": sim.modelled.witness_path_edge_ids,
+        "conditional_witness_edge_ids": sim.modelled.conditional_witness_edge_ids,
+        "path_search_complete": sim.modelled.path_search_complete,
+        "path_search_truncation_reason": sim.modelled.path_search_truncation_reason,
+        "verification_status": (
+            "MODEL_VERIFIED_CUT" if model_cut_verified
+            else "PARTIAL_CUT" if sim.modelled.reachable_unbounded
+            else "INDETERMINATE"
+        ),
+        "minimum_cut_proven": False,
         "coverage_pct": coverage_pct,
         "critical_assets_unlinked": sim.delta_summary["critical_assets_unlinked"],
         "highest_score_reduction": sim.delta_summary["highest_score_reduction"],
@@ -262,7 +317,7 @@ def _verify_and_augment_cut_set(
     }
 
 
-def _solve_optimal_cut_sets(
+def _solve_candidate_cut_sets(
     *,
     nodes: list[GraphNode],
     edges: list[GraphEdge],
@@ -273,7 +328,47 @@ def _solve_optimal_cut_sets(
     max_sets: int = 5,
 ) -> list[dict[str, Any]]:
     if not baseline_paths:
-        return []
+        # Candidate enumeration can time out or hit max_candidates before yielding
+        # a single path. Do not suppress remediation suggestions when independent
+        # BFS still proves that a possible route exists.
+        baseline_graph, _ = build_networkx_graph(nodes, edges, as_of=constraints.as_of)
+        baseline_reachability = verify_reachability(baseline_graph, constraints)
+        if not baseline_reachability.reachable_unbounded:
+            return []
+        witness_ids = [
+            edge_id for edge_id in baseline_reachability.witness_path_edge_ids
+            if edge_id in edge_map
+        ]
+        candidate_sets = [[edge_id] for edge_id in witness_ids[:max_sets]]
+        verified_cuts: list[dict[str, Any]] = []
+        for raw_set in candidate_sets:
+            verified = _verify_and_augment_cut_set(
+                nodes=nodes,
+                edges=edges,
+                constraints=constraints,
+                initial_edge_ids=raw_set,
+                edge_map=edge_map,
+                node_map=node_map,
+                baseline_paths=[],
+            )
+            verified_cuts.append(verified)
+        verified_cuts.sort(
+            key=lambda cut: (
+                cut["reachable_unbounded"],
+                cut["cut_size"],
+                cut["effort_score"],
+                cut["cut_key"],
+            )
+        )
+        results: list[dict[str, Any]] = []
+        for idx, cut in enumerate(verified_cuts[:max_sets], start=1):
+            cut_out = {key: value for key, value in cut.items() if key != "cut_key"}
+            cut_out["id"] = f"cut-{idx}"
+            cut_out["baseline_reachability_witness"] = baseline_reachability.witness_path_edge_ids
+            cut_out["baseline_reachability_verification_complete"] = baseline_reachability.complete
+            cut_out["path_search_complete"] = False
+            results.append(cut_out)
+        return results
 
     num_paths = len(baseline_paths)
     all_mask = (1 << num_paths) - 1
@@ -377,7 +472,7 @@ def _solve_optimal_cut_sets(
 
     verified_cuts.sort(
         key=lambda c: (
-            c["residual_paths"],
+            c["reachable_unbounded"],
             c["cut_size"],
             c["effort_score"],
             -c["paths_broken"],
@@ -548,6 +643,7 @@ def analyze_assessment_intelligence(
     nx_graph, stats = build_networkx_graph(nodes, edges, as_of=constraints.as_of)
     search_out = find_attack_paths(nx_graph, analysis_constraints)
     baseline_paths = search_out.paths
+    baseline_reachability = verify_reachability(nx_graph, analysis_constraints)
 
     node_map = {n.key: n for n in nodes}
     edge_map: dict[str, GraphEdge] = {}
@@ -571,9 +667,18 @@ def analyze_assessment_intelligence(
         e_obj = edge_map.get(eid)
         if e_obj is None:
             continue
-        rem_paths = _paths_covered_without_edges(nodes, edges, analysis_constraints, {eid})
-        residual_count = len(rem_paths)
-        is_singleton = residual_count == 0 and len(baseline_paths) > 0
+        filtered_edges = [edge for edge in edges if edge.edge_id != eid]
+        residual_graph, _ = build_networkx_graph(
+            nodes, filtered_edges, as_of=analysis_constraints.as_of
+        )
+        residual_search = find_attack_paths(residual_graph, analysis_constraints)
+        residual_count = len(residual_search.paths)
+        residual_reachability = verify_reachability(residual_graph, analysis_constraints)
+        is_singleton = (
+            baseline_reachability.reachable_unbounded
+            and residual_reachability.complete
+            and not residual_reachability.reachable_unbounded
+        )
         if is_singleton:
             single_chokepoint_ids.append(eid)
 
@@ -605,13 +710,18 @@ def analyze_assessment_intelligence(
             "cumulative_risk_score": cum_risk,
             "max_path_score": max_risk,
             "residual_paths_if_cut": residual_count,
+            "residual_paths_semantics": "enumerated_candidate_count_not_total",
+            "residual_reachability": residual_reachability.status,
+            "residual_reachable": residual_reachability.reachable_unbounded,
+            "reachability_verification_complete": residual_reachability.complete,
+            "residual_witness_edge_ids": residual_reachability.witness_path_edge_ids,
             "is_single_point_chokepoint": is_singleton,
             "action_label": action_lbl,
             "recommended_transform": tx_dict,
         }
 
-    # 2. Optimal Minimum Cut-Sets (1-edge, 2-edge, greedy verified via real simulation)
-    cut_sets = _solve_optimal_cut_sets(
+    # 2. Bounded candidate cut sets, independently checked by reachability BFS.
+    cut_sets = _solve_candidate_cut_sets(
         nodes=nodes,
         edges=edges,
         constraints=analysis_constraints,
@@ -686,7 +796,12 @@ def analyze_assessment_intelligence(
         ),
     )
 
-    crown_jewels = sorted({p.target_node_label for p in baseline_paths})
+    crown_jewels = sorted(
+        node_map[key].label
+        for key in baseline_reachability.reachable_target_keys
+        if key in node_map
+        and (node_map[key].is_crown_jewel or node_map[key].criticality == "critical")
+    )
     inferred_paths = sum(
         1
         for p in baseline_paths
@@ -713,10 +828,24 @@ def analyze_assessment_intelligence(
             "build_duration_ms": stats.build_duration_ms,
         },
         "summary": {
+            # Legacy count retained for clients; it is a count of returned candidates.
             "total_active_paths": len(baseline_paths),
+            "path_count_semantics": "returned_candidate_count_not_total",
+            "path_search_complete": not search_out.is_truncated,
+            "path_search_truncation_reason": search_out.truncation_reason,
+            "single_point_chokepoints_scope": "edges_present_in_returned_path_candidates",
+            "inferred_path_count_semantics": "returned_candidate_count_not_total",
+            "baseline_possible_reachability": baseline_reachability.reachable_unbounded,
+            "baseline_reachable_within_max_hops": baseline_reachability.reachable_within_max_hops,
+            "baseline_confirmed_reachability": baseline_reachability.confirmed_reachable_unbounded,
+            "reachability_verification_complete": baseline_reachability.complete,
+            "reachable_target_keys": baseline_reachability.reachable_target_keys,
             "reachable_crown_jewels": crown_jewels,
             "single_point_chokepoints_count": len(single_chokepoint_ids),
-            "min_cut_size": cut_sets[0]["cut_size"] if cut_sets else None,
+            # The heuristic candidate solver does not prove a global minimum cut.
+            "min_cut_size": None,
+            "candidate_cut_size": cut_sets[0]["cut_size"] if cut_sets else None,
+            "minimum_cut_proven": False,
             "inferred_dependent_paths": inferred_paths,
             "observed_only_paths": len(baseline_paths) - inferred_paths,
             "uncorroborated_acl_edges": uncorr_acl_count,
@@ -772,10 +901,16 @@ def analyze_single_path_intelligence(
         max_candidates=constraints.max_candidates,
         top_k=25,
         include_inferred=constraints.include_inferred,
+        allowed_edge_types=constraints.allowed_edge_types,
+        excluded_node_keys=constraints.excluded_node_keys,
+        excluded_environments=constraints.excluded_environments,
+        allow_unknown_preconditions=constraints.allow_unknown_preconditions,
         as_of=constraints.as_of,
     )
     g_live, _ = build_networkx_graph(nodes, edges, as_of=constraints.as_of)
-    same_pair_paths = find_attack_paths(g_live, pair_constraints).paths
+    same_pair_out = find_attack_paths(g_live, pair_constraints)
+    same_pair_paths = same_pair_out.paths
+    same_pair_reachability = verify_reachability(g_live, pair_constraints)
 
     blast_map: dict[str, dict[str, Any]] = full_intel["edge_blast_radius"]
 
@@ -800,23 +935,48 @@ def analyze_single_path_intelligence(
 
         # Counterfactual removal of this single edge
         if rel_id in live_edge_map:
-            pair_after = _paths_covered_without_edges(nodes, edges, pair_constraints, {rel_id})
+            pair_after_edges = [edge for edge in edges if edge.edge_id != rel_id]
+            pair_after_graph, _ = build_networkx_graph(
+                nodes, pair_after_edges, as_of=pair_constraints.as_of
+            )
+            pair_after_out = find_attack_paths(pair_after_graph, pair_constraints)
+            pair_after = pair_after_out.paths
+            pair_after_reachability = verify_reachability(
+                pair_after_graph, pair_constraints
+            )
             assess_after_info = blast_map.get(rel_id)
-            assess_rem = (
-                int(assess_after_info["residual_paths_if_cut"])
-                if assess_after_info
-                else len(
-                    _paths_covered_without_edges(
-                        nodes, edges, replace(constraints, top_k=50), {rel_id}
-                    )
+            if assess_after_info:
+                assess_rem = int(assess_after_info["residual_paths_if_cut"])
+                assessment_reachable_remaining = bool(
+                    assess_after_info["residual_reachable"]
                 )
-            )
-            assess_hits = (
-                int(assess_after_info["paths_traversed_count"]) if assess_after_info else 1
-            )
+                assessment_reachability_complete = bool(
+                    assess_after_info["reachability_verification_complete"]
+                )
+                assess_hits = int(assess_after_info["paths_traversed_count"])
+            else:
+                assessment_graph, _ = build_networkx_graph(
+                    nodes, pair_after_edges, as_of=constraints.as_of
+                )
+                assessment_after = verify_reachability(assessment_graph, constraints)
+                assessment_reachable_remaining = assessment_after.reachable_unbounded
+                assessment_reachability_complete = assessment_after.complete
+                assess_rem = len(
+                    _paths_covered_without_edges(nodes, edges, constraints, {rel_id})
+                )
+                assess_hits = 1
         else:
             pair_after = same_pair_paths
+            pair_after_out = same_pair_out
+            pair_after_reachability = same_pair_reachability
             assess_rem = len(full_intel["paths_overlay"])
+            baseline_reachability = bool(
+                full_intel["summary"]["baseline_possible_reachability"]
+            )
+            assessment_reachable_remaining = baseline_reachability
+            assessment_reachability_complete = bool(
+                full_intel["summary"]["reachability_verification_complete"]
+            )
             assess_hits = 0
 
         bypasses_preview = [
@@ -828,13 +988,28 @@ def analyze_single_path_intelligence(
             "relationship_id": rel_id,
             "transition": f"{st['from_node_label']} --[{st['relation_type']}]--> {st['to_node_label']}",
             "this_path_eliminated": rel_id in live_edge_map,
+            # Route counts below are candidate-enumeration counts, not total route counts.
             "same_pair_bypasses_remaining": len(pair_after),
+            "same_pair_path_search_complete": not pair_after_out.is_truncated,
+            "same_pair_reachability_status": pair_after_reachability.status,
+            "same_pair_reachable": pair_after_reachability.reachable_unbounded,
+            "same_pair_reachability_verification_complete": pair_after_reachability.complete,
             "bypass_routes_preview": bypasses_preview,
             "assessment_paths_broken": assess_hits,
             "assessment_paths_remaining": assess_rem,
-            "is_pair_bridge_chokepoint": len(pair_after) == 0 and rel_id in live_edge_map,
-            "is_assessment_chokepoint": assess_rem == 0
-            and int(full_intel["summary"]["total_active_paths"]) > 0,
+            "assessment_reachable_remaining": assessment_reachable_remaining,
+            "assessment_reachability_verification_complete": assessment_reachability_complete,
+            "is_pair_bridge_chokepoint": (
+                not pair_after_reachability.reachable_unbounded
+                and pair_after_reachability.complete
+                and rel_id in live_edge_map
+            ),
+            "is_assessment_chokepoint": (
+                not assessment_reachable_remaining
+                and assessment_reachability_complete
+                and rel_id in live_edge_map
+                and bool(full_intel["summary"]["baseline_possible_reachability"])
+            ),
         }
         per_step_sensitivity.append(bypass_summary)
         step_bypass_lookup[rel_id] = bypass_summary
@@ -843,8 +1018,13 @@ def analyze_single_path_intelligence(
             cap = describe_capability_transition(
                 step_order=step_order, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
             )
+            cap["precondition_outcomes"] = evaluate_edge_preconditions(edge_obj, src_n, tgt_n)
+            cap["precondition_summary"] = precondition_summary(cap["precondition_outcomes"])
             cap["paths_in_assessment_count"] = assess_hits
             cap["same_pair_bypasses_if_removed"] = len(pair_after)
+            cap["same_pair_path_search_complete"] = not pair_after_out.is_truncated
+            cap["same_pair_reachable_if_removed"] = pair_after_reachability.reachable_unbounded
+            cap["same_pair_reachability_verification_complete"] = pair_after_reachability.complete
             cap["is_pair_bridge_chokepoint"] = bypass_summary["is_pair_bridge_chokepoint"]
             cap["is_assessment_chokepoint"] = bypass_summary["is_assessment_chokepoint"]
             cap["edge_betweenness"] = blast_map.get(rel_id, {}).get("betweenness_centrality", 0.0)
@@ -854,7 +1034,11 @@ def analyze_single_path_intelligence(
                 step_order=step_order, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
             )
             for a in raw_asms:
-                if len(pair_after) == 0 and rel_id in live_edge_map:
+                if (
+                    not pair_after_reachability.reachable_unbounded
+                    and pair_after_reachability.complete
+                    and rel_id in live_edge_map
+                ):
                     a["if_falsified"] = (
                         f"Disproving/blocking Step {step_order} eliminates this path with 0 alternate bypasses "
                         f"from {node_map[start_key].label if start_key in node_map else start_key} to "
@@ -884,6 +1068,9 @@ def analyze_single_path_intelligence(
                     "mechanism": st.get("narrative", ""),
                     "paths_in_assessment_count": assess_hits,
                     "same_pair_bypasses_if_removed": len(pair_after),
+                    "same_pair_path_search_complete": not pair_after_out.is_truncated,
+                    "same_pair_reachable_if_removed": pair_after_reachability.reachable_unbounded,
+                    "same_pair_reachability_verification_complete": pair_after_reachability.complete,
                     "is_pair_bridge_chokepoint": False,
                     "is_assessment_chokepoint": False,
                     "edge_betweenness": 0.0,
@@ -1050,6 +1237,10 @@ def analyze_single_path_intelligence(
             "structural_context": {
                 "total_assessment_paths": full_intel["summary"]["total_active_paths"],
                 "same_pair_total_paths": len(same_pair_paths),
+                "same_pair_path_count_semantics": "returned_candidate_count_not_total",
+                "same_pair_path_search_complete": not same_pair_out.is_truncated,
+                "same_pair_reachable": same_pair_reachability.reachable_unbounded,
+                "same_pair_reachability_verification_complete": same_pair_reachability.complete,
                 "parallel_bypass_paths_count": pair_bypasses_other,
                 "chokepoint_step_orders": chokepoint_steps,
                 "scc_cycle_count": full_intel["graph_stats"]["scc_cycle_count"],

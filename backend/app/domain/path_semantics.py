@@ -547,6 +547,7 @@ def build_path_explanation(
                 "fact_kind": s.fact_kind,
                 "confidence": s.confidence,
                 "preconditions": s.preconditions,
+                "precondition_outcomes": s.precondition_outcomes,
                 "assumptions": s.assumptions,
                 "evidence_refs": s.evidence_refs,
             }
