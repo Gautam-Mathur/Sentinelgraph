@@ -179,7 +179,6 @@ def test_cve_patch_without_identifier_is_not_applied() -> None:
 
 
 def test_arbitrary_cve_is_not_applied_from_asset_id_or_open_count_alone() -> None:
-    now = datetime.now(UTC)
     nodes = [
         GraphNode(NodeKind.ASSET, "web", "web", open_cve_count=4),
         GraphNode(NodeKind.ASSET, "db", "db"),
