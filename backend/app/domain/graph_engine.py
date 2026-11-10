@@ -300,7 +300,7 @@ def _bfs_reachability_witness(
     *,
     allow_unknown_preconditions: bool,
     hop_limit: int | None,
-) -> tuple[list[str], list[str], list[str], int, int]:
+) -> tuple[list[str], list[str], list[str], int, int, list[str]]:
     """Return one shortest witness using the same transition and scope filters as path search."""
     effective_constraints = replace(
         constraints, allow_unknown_preconditions=allow_unknown_preconditions
