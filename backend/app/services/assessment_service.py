@@ -214,6 +214,16 @@ def load_domain_graph_inputs(
     for a in assets:
         asset_findings = cves_by_asset.get(a.id, [])
         max_cvss = max((float(f.cvss_score or 0.0) for f in asset_findings), default=0.0)
+        vulnerability_status: dict[str, str] = {}
+        vulnerability_finding_counts: dict[str, int] = {}
+        for finding in asset_findings:
+            if not finding.cve_id:
+                continue
+            cve_key = str(finding.cve_id).upper()
+            vulnerability_status[cve_key] = "open"
+            vulnerability_finding_counts[cve_key] = (
+                vulnerability_finding_counts.get(cve_key, 0) + 1
+            )
         nodes.append(
             GraphNode(
                 node_kind=NodeKind.ASSET,
@@ -232,11 +242,8 @@ def load_domain_graph_inputs(
                     "owner": a.owner,
                     # Preserve CVE identity in the graph; a count alone cannot support
                     # a CVE-specific remediation simulation.
-                    "vulnerability_status": {
-                        str(f.cve_id).upper(): "open"
-                        for f in asset_findings
-                        if f.cve_id
-                    },
+                    "vulnerability_status": vulnerability_status,
+                    "vulnerability_finding_counts": vulnerability_finding_counts,
                 },
             )
         )
