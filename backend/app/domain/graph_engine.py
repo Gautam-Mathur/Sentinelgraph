@@ -63,6 +63,7 @@ class ReachabilityVerification:
     witness_path_edge_ids: list[str] = field(default_factory=list)
     conditional_witness_edge_ids: list[str] = field(default_factory=list)
     confirmed_witness_edge_ids: list[str] = field(default_factory=list)
+    reachable_target_keys: list[str] = field(default_factory=list)
     examined_nodes: int = 0
     examined_edges: int = 0
     max_hops: int = 0
@@ -320,12 +321,14 @@ def _bfs_reachability_witness(
     examined_nodes = 0
     examined_edges = 0
     found_target: str | None = None
+    reached_targets: set[str] = set()
     while queue:
         current, depth = queue.popleft()
         examined_nodes += 1
         if current in targets and depth > 0:
-            found_target = current
-            break
+            reached_targets.add(current)
+            if found_target is None:
+                found_target = current
         if hop_limit is not None and depth >= hop_limit:
             continue
 
@@ -352,7 +355,7 @@ def _bfs_reachability_witness(
             queue.append((next_key, depth + 1))
 
     if found_target is None:
-        return [], [], [], examined_nodes, examined_edges
+        return [], [], [], examined_nodes, examined_edges, sorted(reached_targets)
 
     node_path = [found_target]
     edge_path: list[str] = []
@@ -375,7 +378,7 @@ def _bfs_reachability_witness(
             )
         )
     ]
-    return node_path, edge_path, conditional_ids, examined_nodes, examined_edges
+    return node_path, edge_path, conditional_ids, examined_nodes, examined_edges, sorted(reached_targets)
 
 
 def verify_reachability(
@@ -388,7 +391,7 @@ def verify_reachability(
     confirmed reachability requires every transition prerequisite to be known true.
     The unbounded pass prevents max_hops from being mistaken for graph disconnection.
     """
-    possible_nodes, possible_edges, conditional_edges, examined_nodes, examined_edges = (
+    possible_nodes, possible_edges, conditional_edges, examined_nodes, examined_edges, possible_targets = (
         _bfs_reachability_witness(
             graph,
             constraints,
@@ -396,7 +399,7 @@ def verify_reachability(
             hop_limit=None,
         )
     )
-    bounded_nodes, bounded_edges, _, bounded_examined_nodes, bounded_examined_edges = (
+    bounded_nodes, bounded_edges, _, bounded_examined_nodes, bounded_examined_edges, bounded_targets = (
         _bfs_reachability_witness(
             graph,
             constraints,
@@ -404,7 +407,7 @@ def verify_reachability(
             hop_limit=constraints.max_hops,
         )
     )
-    confirmed_nodes, confirmed_edges, _, confirmed_examined_nodes, confirmed_examined_edges = (
+    confirmed_nodes, confirmed_edges, _, confirmed_examined_nodes, confirmed_examined_edges, confirmed_targets = (
         _bfs_reachability_witness(
             graph,
             constraints,
@@ -412,9 +415,9 @@ def verify_reachability(
             hop_limit=None,
         )
     )
-    reachable = bool(possible_edges)
-    bounded_reachable = bool(bounded_edges)
-    confirmed_reachable = bool(confirmed_edges)
+    reachable = bool(possible_targets)
+    bounded_reachable = bool(bounded_targets)
+    confirmed_reachable = bool(confirmed_targets)
     if reachable and bounded_reachable:
         status = "REACHABLE_PATH_EXISTS"
     elif reachable:
@@ -432,6 +435,7 @@ def verify_reachability(
         witness_path_edge_ids=possible_edges,
         conditional_witness_edge_ids=conditional_edges,
         confirmed_witness_edge_ids=confirmed_edges,
+        reachable_target_keys=possible_targets,
         examined_nodes=max(examined_nodes, bounded_examined_nodes, confirmed_examined_nodes),
         examined_edges=max(examined_edges, bounded_examined_edges, confirmed_examined_edges),
         max_hops=constraints.max_hops,
