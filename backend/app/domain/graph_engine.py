@@ -399,7 +399,7 @@ def verify_reachability(
             hop_limit=None,
         )
     )
-    bounded_nodes, bounded_edges, _, bounded_examined_nodes, bounded_examined_edges, bounded_targets = (
+    _, bounded_edges, _, bounded_examined_nodes, bounded_examined_edges, bounded_targets = (
         _bfs_reachability_witness(
             graph,
             constraints,
@@ -407,7 +407,7 @@ def verify_reachability(
             hop_limit=constraints.max_hops,
         )
     )
-    confirmed_nodes, confirmed_edges, _, confirmed_examined_nodes, confirmed_examined_edges, confirmed_targets = (
+    _, confirmed_edges, _, confirmed_examined_nodes, confirmed_examined_edges, confirmed_targets = (
         _bfs_reachability_witness(
             graph,
             constraints,
