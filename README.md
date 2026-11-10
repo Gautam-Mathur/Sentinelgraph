@@ -298,6 +298,7 @@ sentinelgraph/
 ### Documentation Index
 - [Architecture & Trust Zones](docs/architecture.md)
 - [Scoring Model (`v1.0.0`)](docs/scoring-model.md)
+- [Attack-Graph Research Upgrade & Architecture Roadmap](docs/research/attack-graph-research-upgrade-2026.md)
 - [Data Dictionary & Controlled Enums](docs/data-dictionary.md)
 - [Threat Model & Abuse Case Matrix](docs/threat-model.md)
 - [Test Plan & Verification Matrix](docs/test-plan.md)
