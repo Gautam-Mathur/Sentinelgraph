@@ -202,14 +202,27 @@ def _verify_and_augment_cut_set(
                     constraints=constraints,
                     transforms=trial_txs,
                 )
-                reachability_no_worse = (
-                    not trial_sim.modelled.reachable_unbounded
-                    or sim.modelled.reachable_unbounded
+                trial_unreachable = not trial_sim.modelled.reachable_unbounded
+                current_unreachable = not sim.modelled.reachable_unbounded
+                strict_reachability_improvement = (
+                    trial_unreachable and not current_unreachable
                 )
-                if (
-                    reachability_no_worse
+                both_unreachable = trial_unreachable and current_unreachable
+                comparable_complete_counts = (
+                    trial_sim.modelled.path_search_complete
+                    and sim.modelled.path_search_complete
                     and trial_sim.modelled.total_paths <= sim.modelled.total_paths
-                ):
+                )
+                reachability_no_worse = (
+                    strict_reachability_improvement
+                    or both_unreachable
+                    or (
+                        trial_sim.modelled.reachable_unbounded
+                        and sim.modelled.reachable_unbounded
+                        and comparable_complete_counts
+                    )
+                )
+                if reachability_no_worse:
                     chosen_ids = trial_ids
                     transforms_dicts = [
                         recommended_transform_for_edge(edge_map[eid], node_map)[0]
@@ -228,7 +241,12 @@ def _verify_and_augment_cut_set(
         _, lbl, eff = recommended_transform_for_edge(e_obj, node_map)
         effort_score += eff
         hits = sum(1 for p in baseline_paths if eid in _extract_path_edge_ids(p))
-        steps_summary.append(f"{lbl} (breaks {hits}/{len(baseline_paths)} active paths)")
+        if baseline_paths:
+            steps_summary.append(f"{lbl} (breaks {hits}/{len(baseline_paths)} enumerated candidates)")
+        else:
+            steps_summary.append(
+                f"{lbl} (selected from a BFS reachability witness; path enumeration returned no candidates)"
+            )
 
     base_total = sim.baseline.total_paths
     eliminated = sim.delta_summary["paths_eliminated"]
@@ -255,8 +273,15 @@ def _verify_and_augment_cut_set(
     else:
         label = f"{len(chosen_ids)}-Edge Partial Candidate Cut ({coverage_pct}% sampled paths eliminated)"
         rationale = (
-            f"Eliminates {eliminated} of {base_total} enumerated candidate paths, but BFS still "
-            f"finds a possible residual route ({sim.modelled.reachability_status})."
+            (
+                "Path enumeration returned no candidates, but independent BFS still finds "
+                f"a possible residual route ({sim.modelled.reachability_status})."
+            )
+            if base_total == 0
+            else (
+                f"Eliminates {eliminated} of {base_total} enumerated candidate paths, but BFS still "
+                f"finds a possible residual route ({sim.modelled.reachability_status})."
+            )
         )
 
     return {
@@ -448,7 +473,7 @@ def _solve_candidate_cut_sets(
 
     verified_cuts.sort(
         key=lambda c: (
-            c["residual_paths"],
+            c["reachable_unbounded"],
             c["cut_size"],
             c["effort_score"],
             -c["paths_broken"],
