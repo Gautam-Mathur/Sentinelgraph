@@ -10,6 +10,7 @@ from app.domain.models import (
     RelationType,
     RemediationTransformType,
 )
+from app.domain.graph_engine import build_networkx_graph
 from app.domain.remediation_sim import (
     RemediationTransform,
     apply_sandbox_transforms,
@@ -131,6 +132,15 @@ def test_patching_cve_invalidates_vulnerability_prerequisite_without_changing_co
     assert patched_edges[0].confidence == 0.91
     assert patched_edges[0].edge_metadata["vulnerability_status"]["CVE-2024-12345"] == "patched"
     assert patched_nodes[0].open_cve_count == 0
+
+    # A patched transition may remain in the sandbox evidence record for provenance,
+    # but it must not survive as an active graph edge or influence graph diagnostics.
+    patched_graph, patched_stats = build_networkx_graph(
+        patched_nodes, patched_edges, as_of=now
+    )
+    assert patched_edges[0].confidence == 0.91
+    assert patched_graph.number_of_edges() == 0
+    assert patched_stats.blocked_precondition_edge_count == 1
 
     sim = simulate_remediation(
         nodes=nodes,
