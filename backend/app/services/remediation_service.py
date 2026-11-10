@@ -18,6 +18,30 @@ from app.services.audit_service import record_audit_event
 from app.services.context import ActorContext
 
 
+def _simulation_metrics_payload(metrics: Any) -> dict[str, Any]:
+    return {
+        "total_paths": metrics.total_paths,
+        "path_count_semantics": metrics.path_count_semantics,
+        "path_search_complete": metrics.path_search_complete,
+        "path_search_truncation_reason": metrics.path_search_truncation_reason,
+        "reachable_critical_assets": metrics.reachable_critical_assets,
+        "reachable_critical_asset_labels": metrics.reachable_critical_asset_labels,
+        "highest_path_score": metrics.highest_path_score,
+        "high_confidence_paths": metrics.high_confidence_paths,
+        "key_bridge_nodes": metrics.key_bridge_nodes,
+        "reachability_status": metrics.reachability_status,
+        "reachable_within_max_hops": metrics.reachable_within_max_hops,
+        "reachable_unbounded": metrics.reachable_unbounded,
+        "confirmed_reachable_unbounded": metrics.confirmed_reachable_unbounded,
+        "reachability_verification_complete": metrics.reachability_verification_complete,
+        "reachable_target_keys": metrics.reachable_target_keys,
+        "witness_path_edge_ids": metrics.witness_path_edge_ids,
+        "conditional_witness_edge_ids": metrics.conditional_witness_edge_ids,
+        "reachability_examined_nodes": metrics.reachability_examined_nodes,
+        "reachability_examined_edges": metrics.reachability_examined_edges,
+    }
+
+
 def simulate_remediation_plan(
     db: Session,
     ctx: ActorContext,
@@ -77,22 +101,8 @@ def simulate_remediation_plan(
         transforms=domain_transforms,
     )
 
-    baseline_dict = {
-        "total_paths": comp.baseline.total_paths,
-        "reachable_critical_assets": comp.baseline.reachable_critical_assets,
-        "reachable_critical_asset_labels": comp.baseline.reachable_critical_asset_labels,
-        "highest_path_score": comp.baseline.highest_path_score,
-        "high_confidence_paths": comp.baseline.high_confidence_paths,
-        "key_bridge_nodes": comp.baseline.key_bridge_nodes,
-    }
-    modelled_dict = {
-        "total_paths": comp.modelled.total_paths,
-        "reachable_critical_assets": comp.modelled.reachable_critical_assets,
-        "reachable_critical_asset_labels": comp.modelled.reachable_critical_asset_labels,
-        "highest_path_score": comp.modelled.highest_path_score,
-        "high_confidence_paths": comp.modelled.high_confidence_paths,
-        "key_bridge_nodes": comp.modelled.key_bridge_nodes,
-    }
+    baseline_dict = _simulation_metrics_payload(comp.baseline)
+    modelled_dict = _simulation_metrics_payload(comp.modelled)
 
     action_row = RemediationAction(
         tenant_id=ctx.tenant_id,
@@ -174,20 +184,41 @@ def validate_remediation_against_assessment(
     observed_later = _summarize_metrics(nodes, edges, constraints)
 
     modelled_paths = int(rem.modelled_metrics.get("total_paths", 0))
-    baseline_paths = int(rem.baseline_metrics.get("total_paths", 0))
-    verified = observed_later.total_paths <= modelled_paths and observed_later.total_paths < baseline_paths
+    modelled_reachable = rem.modelled_metrics.get("reachable_unbounded")
+    modelled_count_complete = bool(rem.modelled_metrics.get("path_search_complete", False))
+    observed_reachability_complete = observed_later.reachability_verification_complete
+    if modelled_reachable is False:
+        # A model-verified disconnection is validated only when the later graph's
+        # independent reachability check also finds no possible route.
+        verified = observed_reachability_complete and not observed_later.reachable_unbounded
+    elif modelled_reachable is True:
+        # For a partial/connected model, path-count comparison is meaningful only
+        # when both bounded enumerations completed without top-k/candidate truncation.
+        verified = (
+            observed_reachability_complete
+            and observed_later.reachable_unbounded
+            and modelled_count_complete
+            and observed_later.path_search_complete
+            and observed_later.total_paths <= modelled_paths
+        )
+    else:
+        verified = False
 
     validation_result = {
         "later_assessment_id": str(later_assess.id),
         "later_assessment_name": later_assess.name,
         "observed_total_paths": observed_later.total_paths,
+        "observed_path_search_complete": observed_later.path_search_complete,
+        "observed_reachability_status": observed_later.reachability_status,
+        "observed_reachable_unbounded": observed_later.reachable_unbounded,
+        "observed_confirmed_reachable_unbounded": observed_later.confirmed_reachable_unbounded,
         "observed_reachable_critical_assets": observed_later.reachable_critical_assets,
         "observed_highest_path_score": observed_later.highest_path_score,
         "matches_modelled_reduction": verified,
         "summary": (
-            "Later assessment confirms path reduction predicted by sandbox model."
+            "Later assessment's independent reachability result matches the sandbox model."
             if verified
-            else "Later assessment still shows residual attack paths exceeding modelled target."
+            else "Later assessment does not yet confirm the sandbox model; bounded path counts alone are insufficient."
         ),
     }
 
