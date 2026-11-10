@@ -76,16 +76,20 @@ def _field_condition(
     )
 
 
-def _network_condition(edge: GraphEdge) -> dict[str, Any]:
+def _network_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
     metadata = edge.edge_metadata
+    conditions: list[dict[str, Any]] = []
     if "network_reachable" in metadata:
-        return _field_condition(
-            edge,
-            condition_id=f"{edge.edge_id}:network-reachable",
-            kind="network_reachable",
-            field="network_reachable",
-            reason="Network path must be permitted by routing and packet-filter policy.",
+        conditions.append(
+            _field_condition(
+                edge,
+                condition_id=f"{edge.edge_id}:network-reachable",
+                kind="network_reachable",
+                field="network_reachable",
+                reason="Network path must be permitted by routing and packet-filter policy.",
+            )
         )
+
     action = metadata.get("acl_action")
     if isinstance(action, str):
         normalized = action.strip().lower()
@@ -95,25 +99,31 @@ def _network_condition(edge: GraphEdge) -> dict[str, Any]:
             status = FALSE
         else:
             status = UNKNOWN
-        return _outcome(
-            condition_id=f"{edge.edge_id}:acl-action",
-            kind="network_reachable",
-            status=status,
-            field="acl_action",
-            observed_value=action,
-            expected=["allow", "permit", "accept"],
-            reason="ACL action must permit the source-to-target flow.",
-            evidence_ref=str(metadata.get("acl_rule") or "") or None,
+        conditions.append(
+            _outcome(
+                condition_id=f"{edge.edge_id}:acl-action",
+                kind="network_reachable",
+                status=status,
+                field="acl_action",
+                observed_value=action,
+                expected=["allow", "permit", "accept"],
+                reason="ACL action must permit the source-to-target flow.",
+                evidence_ref=str(metadata.get("acl_rule") or "") or None,
+            )
         )
-    return _outcome(
-        condition_id=f"{edge.edge_id}:network-reachable",
-        kind="network_reachable",
-        status=UNKNOWN,
-        field="network_reachable",
-        reason="No explicit network reachability or ACL action evidence is attached to this relationship.",
-        evidence_ref=str(metadata.get("acl_rule") or "") or None,
-    )
 
+    if not conditions:
+        conditions.append(
+            _outcome(
+                condition_id=f"{edge.edge_id}:network-reachable",
+                kind="network_reachable",
+                status=UNKNOWN,
+                field="network_reachable",
+                reason="No explicit network reachability or ACL action evidence is attached to this relationship.",
+                evidence_ref=str(metadata.get("acl_rule") or "") or None,
+            )
+        )
+    return conditions
 
 def _admin_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
     metadata = edge.edge_metadata
@@ -212,7 +222,7 @@ def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
     Missing facts evaluate to unknown; they are never silently treated as true.
     """
     explicit = edge.edge_metadata.get("preconditions")
-    if isinstance(explicit, list):
+    if isinstance(explicit, list) and explicit:
         outcomes: list[dict[str, Any]] = []
         for index, spec in enumerate(explicit):
             if not isinstance(spec, dict):
@@ -273,7 +283,7 @@ def evaluate_edge_preconditions(edge: GraphEdge) -> list[dict[str, Any]]:
 
     outcomes = []
     if edge.relation_type in (RelationType.CONNECTS_TO, RelationType.EXPOSES):
-        outcomes.append(_network_condition(edge))
+        outcomes.extend(_network_conditions(edge))
     elif edge.relation_type == RelationType.CAN_ADMINISTER:
         outcomes.extend(_admin_conditions(edge))
     elif edge.relation_type == RelationType.MEMBER_OF:
