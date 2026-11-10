@@ -2,7 +2,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
-from app.domain.graph_engine import build_networkx_graph, find_attack_paths
+from app.domain.graph_engine import build_networkx_graph, find_attack_paths, verify_reachability
 from app.domain.models import (
     GraphEdge,
     GraphNode,
@@ -28,12 +28,26 @@ class RemediationTransform:
 
 @dataclass
 class SimulationMetrics:
+    # Legacy field: number of enumerated candidates returned, not necessarily the graph's total paths.
     total_paths: int
     reachable_critical_assets: int
     reachable_critical_asset_labels: list[str]
     highest_path_score: float
     high_confidence_paths: int
     key_bridge_nodes: list[dict[str, Any]]
+    path_search_complete: bool
+    path_search_truncation_reason: str | None
+    path_count_semantics: str
+    reachability_status: str
+    reachable_within_max_hops: bool
+    reachable_unbounded: bool
+    confirmed_reachable_unbounded: bool
+    reachability_verification_complete: bool
+    reachable_target_keys: list[str]
+    witness_path_edge_ids: list[str]
+    conditional_witness_edge_ids: list[str]
+    reachability_examined_nodes: int
+    reachability_examined_edges: int
 
 
 @dataclass
@@ -56,19 +70,21 @@ def _summarize_metrics(
 ) -> SimulationMetrics:
     graph, build_stats = build_networkx_graph(nodes, edges, as_of=constraints.as_of)
     search_out = find_attack_paths(graph, constraints)
+    reachability = verify_reachability(graph, constraints)
     node_map = {n.key: n for n in nodes}
 
-    critical_targets: set[str] = set()
+    critical_targets = {
+        node_map[key].label
+        for key in reachability.reachable_target_keys
+        if key in node_map
+        and (node_map[key].criticality == "critical" or node_map[key].is_crown_jewel)
+    }
     high_conf_count = 0
     highest_score = 0.0
     for path in search_out.paths:
         highest_score = max(highest_score, path.priority_score)
         if path.evidence_confidence >= 0.7:
             high_conf_count += 1
-        tkey = f"{path.target_node_kind}:{path.target_node_id}"
-        tnode = node_map.get(tkey)
-        if tnode and (tnode.criticality == "critical" or tnode.is_crown_jewel):
-            critical_targets.add(tnode.label)
 
     return SimulationMetrics(
         total_paths=len(search_out.paths),
@@ -77,6 +93,19 @@ def _summarize_metrics(
         highest_path_score=round(highest_score, 2),
         high_confidence_paths=high_conf_count,
         key_bridge_nodes=build_stats.top_bridge_nodes[:5],
+        path_search_complete=not search_out.is_truncated,
+        path_search_truncation_reason=search_out.truncation_reason,
+        path_count_semantics="returned_candidate_count_not_total",
+        reachability_status=reachability.status,
+        reachable_within_max_hops=reachability.reachable_within_max_hops,
+        reachable_unbounded=reachability.reachable_unbounded,
+        confirmed_reachable_unbounded=reachability.confirmed_reachable_unbounded,
+        reachability_verification_complete=reachability.complete,
+        reachable_target_keys=reachability.reachable_target_keys,
+        witness_path_edge_ids=reachability.witness_path_edge_ids,
+        conditional_witness_edge_ids=reachability.conditional_witness_edge_ids,
+        reachability_examined_nodes=reachability.examined_nodes,
+        reachability_examined_edges=reachability.examined_edges,
     )
 
 
@@ -92,6 +121,8 @@ def apply_sandbox_transforms(
 
     for tx in transforms:
         affected = 0
+        status = "applied"
+        reason: str | None = None
         if tx.transform_type == RemediationTransformType.REMOVE_RELATIONSHIP:
             before = len(sandbox_edges)
             sandbox_edges = [e for e in sandbox_edges if e.edge_id != tx.relationship_id]
@@ -159,21 +190,54 @@ def apply_sandbox_transforms(
             sandbox_edges = kept
 
         elif tx.transform_type == RemediationTransformType.PATCH_VULNERABILITY:
-            for n in sandbox_nodes:
-                if tx.asset_id and n.node_id == tx.asset_id and n.open_cve_count > 0:
-                    n.open_cve_count = max(0, n.open_cve_count - 1)
+            if not tx.cve_id:
+                status = "not_applied"
+                reason = "cve_id_required: a vulnerability must be identified before it can be patched."
+            else:
+                cve = tx.cve_id.upper()
+                for node in sandbox_nodes:
+                    node_states = node.metadata.get("vulnerability_status", {})
+                    matches_asset = tx.asset_id is not None and node.node_id == tx.asset_id
+                    matches_vulnerability = (
+                        isinstance(node_states, dict)
+                        and cve in {str(item).upper() for item in node_states}
+                    )
+                    if not (matches_asset or (tx.asset_id is None and matches_vulnerability)):
+                        continue
+                    states = node.metadata.setdefault("vulnerability_status", {})
+                    states[cve] = "patched"
+                    remediated = node.metadata.setdefault("remediated_cves", [])
+                    if cve not in remediated:
+                        remediated.append(cve)
+                    if node.open_cve_count > 0:
+                        node.open_cve_count = max(0, node.open_cve_count - 1)
                     affected += 1
-            for e in sandbox_edges:
-                linked_cve = e.edge_metadata.get("requires_cve")
-                if tx.cve_id and linked_cve == tx.cve_id:
-                    e.confidence = max(0.1, round(e.confidence * 0.25, 3))
+
+                for edge in sandbox_edges:
+                    linked_cve = edge.edge_metadata.get("requires_cve")
+                    if not isinstance(linked_cve, str) or linked_cve.upper() != cve:
+                        continue
+                    if tx.asset_id and tx.asset_id not in (edge.source_id, edge.target_id):
+                        continue
+                    states = edge.edge_metadata.setdefault("vulnerability_status", {})
+                    states[cve] = "patched"
+                    remediated = edge.edge_metadata.setdefault("remediated_cves", [])
+                    if cve not in remediated:
+                        remediated.append(cve)
                     affected += 1
-            sandbox_edges = [e for e in sandbox_edges if e.confidence >= min_confidence_threshold]
+
+                if affected == 0:
+                    status = "not_applied"
+                    reason = "no_matching_vulnerability_reference: no node or transition referenced the specified CVE and asset scope."
 
         applied_log.append(
             {
                 "transform_type": tx.transform_type.value,
                 "affected_elements": affected,
+                "status": status,
+                "reason": reason,
+                "asset_id": tx.asset_id,
+                "cve_id": tx.cve_id,
                 "notes": tx.notes,
             }
         )
@@ -194,8 +258,23 @@ def simulate_remediation(
     )
     modelled = _summarize_metrics(sb_nodes, sb_edges, constraints)
 
+    sampled_paths_eliminated = baseline.total_paths - modelled.total_paths
     delta_summary = {
-        "paths_eliminated": baseline.total_paths - modelled.total_paths,
+        # Backward-compatible metric. This is a delta over returned candidates only.
+        "paths_eliminated": sampled_paths_eliminated,
+        "sampled_paths_eliminated": sampled_paths_eliminated,
+        "paths_eliminated_is_complete": (
+            baseline.path_search_complete and modelled.path_search_complete
+        ),
+        "possible_reachability_eliminated": (
+            baseline.reachable_unbounded and not modelled.reachable_unbounded
+        ),
+        "possible_residual_reachability": modelled.reachable_unbounded,
+        "confirmed_residual_reachability": modelled.confirmed_reachable_unbounded,
+        "reachability_verification_complete": (
+            baseline.reachability_verification_complete
+            and modelled.reachability_verification_complete
+        ),
         "critical_assets_unlinked": (
             baseline.reachable_critical_assets - modelled.reachable_critical_assets
         ),
