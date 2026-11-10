@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 
+from app.domain.graph_engine import build_networkx_graph
 from app.domain.models import (
     FactKind,
     GraphEdge,
@@ -10,7 +11,6 @@ from app.domain.models import (
     RelationType,
     RemediationTransformType,
 )
-from app.domain.graph_engine import build_networkx_graph
 from app.domain.remediation_sim import (
     RemediationTransform,
     apply_sandbox_transforms,
