@@ -90,7 +90,14 @@ def test_simulation_reports_reachability_when_candidate_enumeration_is_truncated
 def test_patching_cve_invalidates_vulnerability_prerequisite_without_changing_confidence() -> None:
     now = datetime.now(UTC)
     nodes = [
-        GraphNode(NodeKind.ASSET, "web", "web", is_external_entry=True, open_cve_count=1),
+        GraphNode(
+            NodeKind.ASSET,
+            "web",
+            "web",
+            is_external_entry=True,
+            open_cve_count=1,
+            metadata={"vulnerability_status": {"CVE-2024-12345": "open"}},
+        ),
         GraphNode(NodeKind.ASSET, "app", "app", criticality="critical", is_crown_jewel=True),
     ]
     edges = [
@@ -168,3 +175,26 @@ def test_cve_patch_without_identifier_is_not_applied() -> None:
     assert applied[0]["reason"].startswith("cve_id_required")
     assert patched_edges[0].confidence == 0.9
     assert nodes[0].open_cve_count == 2
+
+
+
+def test_arbitrary_cve_is_not_applied_from_asset_id_or_open_count_alone() -> None:
+    now = datetime.now(UTC)
+    nodes = [
+        GraphNode(NodeKind.ASSET, "web", "web", open_cve_count=4),
+        GraphNode(NodeKind.ASSET, "db", "db"),
+    ]
+    transform = RemediationTransform(
+        transform_type=RemediationTransformType.PATCH_VULNERABILITY,
+        asset_id="web",
+        cve_id="CVE-2024-99999",
+    )
+    patched_nodes, patched_edges, applied = apply_sandbox_transforms(
+        nodes, [], [transform]
+    )
+
+    assert applied[0]["status"] == "not_applied"
+    assert applied[0]["affected_elements"] == 0
+    assert patched_nodes[0].open_cve_count == 4
+    assert patched_nodes[0].metadata == {}
+    assert patched_edges == []
