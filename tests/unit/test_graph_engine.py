@@ -120,6 +120,13 @@ def test_unknown_transition_preconditions_are_conditional_not_confirmed() -> Non
     assert verification.confirmed_reachable_unbounded is False
     assert verification.conditional_witness_edge_ids
 
+    # Reachability verification always reports possible routes, even when the
+    # caller requested confirmed-only candidate enumeration.
+    strict_verification = verify_reachability(graph, confirmed_constraints)
+    assert strict_verification.reachable_unbounded is True
+    assert strict_verification.confirmed_reachable_unbounded is False
+    assert strict_verification.conditional_witness_edge_ids
+
 
 def test_false_transition_precondition_blocks_path() -> None:
     nodes, edges = _sample_graph_data()
@@ -331,6 +338,8 @@ def test_explicit_admin_precondition_does_not_bypass_admin_state() -> None:
         now,
         edge_metadata={
             "preconditions": [{"kind": "mfa_gate", "status": True}],
+            "pam_enforced": False,
+            "mfa_required": True,
         },
     )
     graph, _ = build_networkx_graph(nodes, [edge])
@@ -345,3 +354,8 @@ def test_explicit_admin_precondition_does_not_bypass_admin_state() -> None:
     edge.edge_metadata["admin_enabled"] = True
     graph_enabled, _ = build_networkx_graph(nodes, [edge])
     assert len(find_attack_paths(graph_enabled, constraints).paths) == 1
+
+    # A typed positive assertion must not override contradictory observed MFA state.
+    edge.edge_metadata["mfa_satisfied"] = False
+    graph_conflicting, _ = build_networkx_graph(nodes, [edge])
+    assert find_attack_paths(graph_conflicting, constraints).paths == []

@@ -400,7 +400,7 @@ def verify_reachability(
         _bfs_reachability_witness(
             graph,
             constraints,
-            allow_unknown_preconditions=constraints.allow_unknown_preconditions,
+            allow_unknown_preconditions=True,
             hop_limit=None,
         )
     )
@@ -408,7 +408,7 @@ def verify_reachability(
         _bfs_reachability_witness(
             graph,
             constraints,
-            allow_unknown_preconditions=constraints.allow_unknown_preconditions,
+            allow_unknown_preconditions=True,
             hop_limit=constraints.max_hops,
         )
     )

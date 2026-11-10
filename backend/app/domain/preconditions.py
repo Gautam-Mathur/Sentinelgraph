@@ -125,23 +125,46 @@ def _network_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
         )
     return conditions
 
-def _admin_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
+def _explicit_gate_status(
+    gate_kind: str,
+    explicit_statuses: dict[str, list[str]],
+) -> str:
+    statuses = explicit_statuses.get(gate_kind, [])
+    if FALSE in statuses:
+        return FALSE
+    if TRUE in statuses:
+        return TRUE
+    return UNKNOWN
+
+
+def _admin_conditions(
+    edge: GraphEdge,
+    explicit_statuses: dict[str, list[str]],
+) -> list[dict[str, Any]]:
     metadata = edge.edge_metadata
+    admin_field = (
+        "admin_enabled"
+        if "admin_enabled" in metadata
+        else "standing_admin_enabled"
+    )
     conditions = [
         _field_condition(
             edge,
             condition_id=f"{edge.edge_id}:admin-enabled",
             kind="standing_admin_right_active",
-            field="admin_enabled" if "admin_enabled" in metadata else "standing_admin_enabled",
+            field=admin_field,
             reason="The administrative right must be active for this transition.",
         )
-        if ("admin_enabled" in metadata or "standing_admin_enabled" in metadata)
+        if (("admin_enabled" in metadata) or ("standing_admin_enabled" in metadata))
         else _outcome(
             condition_id=f"{edge.edge_id}:admin-enabled",
             kind="standing_admin_right_active",
             status=UNKNOWN,
             field="admin_enabled",
-            reason="The edge records an administrative relationship but does not state whether the right is currently active.",
+            reason=(
+                "The edge records an administrative relationship but does not state "
+                "whether the right is currently active."
+            ),
         )
     ]
 
@@ -149,37 +172,58 @@ def _admin_conditions(edge: GraphEdge) -> list[dict[str, Any]]:
         ("pam", "pam_enforced", "pam_approval_granted"),
         ("mfa", "mfa_required", "mfa_satisfied"),
     ):
-        if required_key not in metadata:
-            conditions.append(
-                _outcome(
-                    condition_id=f"{edge.edge_id}:{gate}-gate",
-                    kind=f"{gate}_gate",
-                    status=UNKNOWN,
-                    field=required_key,
-                    reason=f"It is unknown whether the {gate.upper()} gate is enforced for this transition.",
-                )
+        explicit_status = _explicit_gate_status(
+            f"{gate}_gate", explicit_statuses
+        )
+        required_present = required_key in metadata
+        required = metadata.get(required_key)
+        satisfied_present = satisfied_key in metadata
+        satisfied_status = _status_from_value(metadata.get(satisfied_key))
+
+        if required is False:
+            status = TRUE
+            reason = f"{gate.upper()} is explicitly not required for this transition."
+        elif required is True:
+            # An explicit typed gate may resolve missing satisfaction evidence, but
+            # it cannot overrule an observed failure of the gate.
+            status = (
+                satisfied_status
+                if satisfied_status != UNKNOWN
+                else explicit_status
             )
-        elif metadata.get(required_key) is False:
-            conditions.append(
-                _outcome(
-                    condition_id=f"{edge.edge_id}:{gate}-gate",
-                    kind=f"{gate}_gate",
-                    status=TRUE,
-                    field=required_key,
-                    observed_value=False,
-                    reason=f"{gate.upper()} is explicitly not required for this transition.",
-                )
+            reason = (
+                f"{gate.upper()} approval/satisfaction must be present when the gate is enforced."
             )
+        elif not required_present:
+            # With no policy flag, the gate is unknown unless a typed, evidence-backed
+            # precondition explicitly records its outcome.
+            if satisfied_present and satisfied_status == FALSE:
+                status = FALSE
+                reason = f"{gate.upper()} satisfaction is explicitly recorded as false."
+            else:
+                status = explicit_status
+                reason = (
+                    f"It is unknown whether the {gate.upper()} gate is enforced; "
+                    "a typed explicit gate result may resolve this uncertainty."
+                )
         else:
-            conditions.append(
-                _field_condition(
-                    edge,
-                    condition_id=f"{edge.edge_id}:{gate}-gate",
-                    kind=f"{gate}_gate",
-                    field=satisfied_key,
-                    reason=f"{gate.upper()} approval/satisfaction must be present when the gate is enforced.",
-                )
+            # A malformed/non-boolean policy value cannot be silently treated as
+            # either enforced or disabled.
+            status = explicit_status
+            reason = f"The {gate.upper()} enforcement flag is not a recognised boolean."
+
+        conditions.append(
+            _outcome(
+                condition_id=f"{edge.edge_id}:{gate}-gate",
+                kind=f"{gate}_gate",
+                status=status,
+                field=satisfied_key if required is True else required_key,
+                observed_value=metadata.get(satisfied_key)
+                if required is True or satisfied_present
+                else required,
+                reason=reason,
             )
+        )
     return conditions
 
 
@@ -338,7 +382,13 @@ def evaluate_edge_preconditions(
             # precondition also exists, so contradictory evidence cannot be hidden.
             outcomes.extend(_network_conditions(edge))
     elif edge.relation_type == RelationType.CAN_ADMINISTER:
-        outcomes.extend(_admin_conditions(edge))
+        explicit_gate_statuses: dict[str, list[str]] = {}
+        for outcome in outcomes:
+            if outcome["kind"] in {"pam_gate", "mfa_gate"}:
+                explicit_gate_statuses.setdefault(outcome["kind"], []).append(
+                    outcome["status"]
+                )
+        outcomes.extend(_admin_conditions(edge, explicit_gate_statuses))
     elif edge.relation_type == RelationType.MEMBER_OF:
         outcomes.append(
             _field_condition(

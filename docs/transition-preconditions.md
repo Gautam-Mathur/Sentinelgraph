@@ -64,13 +64,17 @@ analyst assertion supports it.
 
 ## Built-in relationship fields
 
-When no explicit `preconditions` list is supplied, known relationship types use
-these metadata fields:
+Built-in relationship checks are evaluated alongside explicit `preconditions`.
+An evidence-backed typed explicit gate (for example, `mfa_gate`) may resolve an
+otherwise unknown corresponding gate. It cannot override a known-false built-in
+observation or bypass the mandatory administrative-right and CVE checks.
+
+Known relationship types use these metadata fields:
 
 | Relationship | Required metadata | Meaning when missing |
 |---|---|---|
 | `CONNECTS_TO`, `EXPOSES` | `network_reachable: true` and/or `acl_action: allow/permit/accept` | Unknown |
-| `CAN_ADMINISTER` | `admin_enabled` (or `standing_admin_enabled`); when enforced, `pam_approval_granted` and `mfa_satisfied` | Unknown |
+| `CAN_ADMINISTER` | `admin_enabled` (or `standing_admin_enabled`); when `pam_enforced=true`, `pam_approval_granted`; when `mfa_required=true`, `mfa_satisfied` | Unknown |
 | `MEMBER_OF` | `membership_active: true` | Unknown |
 | `HAS_ROLE` | `credential_available: true` | Unknown |
 | `TRUSTS` | `trust_accepts_token: true` | Unknown |

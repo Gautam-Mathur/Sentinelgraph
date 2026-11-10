@@ -63,6 +63,34 @@ class SimulationComparison:
     )
 
 
+def _replace_cve_key_case_insensitive(
+    values: dict[str, Any],
+    cve_id: str,
+    replacement: Any,
+) -> dict[str, Any]:
+    """Replace every case-variant of one CVE key with a canonical uppercase key."""
+    canonical_cve = cve_id.upper()
+    updated = {
+        key: value
+        for key, value in values.items()
+        if str(key).upper() != canonical_cve
+    }
+    updated[canonical_cve] = replacement
+    return updated
+
+
+def _case_insensitive_cve_value(
+    values: dict[str, Any],
+    cve_id: str,
+    default: Any = None,
+) -> Any:
+    canonical_cve = cve_id.upper()
+    for key, value in values.items():
+        if str(key).upper() == canonical_cve:
+            return value
+    return default
+
+
 def _summarize_metrics(
     nodes: list[GraphNode],
     edges: list[GraphEdge],
@@ -218,14 +246,14 @@ def apply_sandbox_transforms(
                     if matching_key is None and not already_recorded:
                         continue
 
-                    states = dict(state_map)
                     prior_state = (
-                        str(states.get(matching_key)).lower()
+                        str(state_map.get(matching_key)).lower()
                         if matching_key is not None
                         else "patched"
                     )
-                    states[cve] = "patched"
-                    node.metadata["vulnerability_status"] = states
+                    node.metadata["vulnerability_status"] = (
+                        _replace_cve_key_case_insensitive(state_map, cve, "patched")
+                    )
                     remediated = list(remediated_list)
                     if not already_recorded:
                         remediated.append(cve)
@@ -233,7 +261,7 @@ def apply_sandbox_transforms(
                     if prior_state in active_states and node.open_cve_count > 0:
                         count_map = node.metadata.get("vulnerability_finding_counts")
                         raw_count = (
-                            count_map.get(matching_key or cve, 1)
+                            _case_insensitive_cve_value(count_map, cve, 1)
                             if isinstance(count_map, dict)
                             else 1
                         )
@@ -243,9 +271,9 @@ def apply_sandbox_transforms(
                             finding_count = 1
                         node.open_cve_count = max(0, node.open_cve_count - finding_count)
                         if isinstance(count_map, dict):
-                            updated_counts = dict(count_map)
-                            updated_counts[cve] = 0
-                            node.metadata["vulnerability_finding_counts"] = updated_counts
+                            node.metadata["vulnerability_finding_counts"] = (
+                                _replace_cve_key_case_insensitive(count_map, cve, 0)
+                            )
                     affected += 1
 
                 for edge in sandbox_edges:
@@ -267,9 +295,9 @@ def apply_sandbox_transforms(
                             continue
                     raw_states = edge.edge_metadata.get("vulnerability_status")
                     state_map = raw_states if isinstance(raw_states, dict) else {}
-                    states = dict(state_map)
-                    states[cve] = "patched"
-                    edge.edge_metadata["vulnerability_status"] = states
+                    edge.edge_metadata["vulnerability_status"] = (
+                        _replace_cve_key_case_insensitive(state_map, cve, "patched")
+                    )
                     raw_remediated = edge.edge_metadata.get("remediated_cves")
                     remediated = (
                         list(raw_remediated) if isinstance(raw_remediated, list) else []

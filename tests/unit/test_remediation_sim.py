@@ -149,6 +149,73 @@ def test_patching_cve_invalidates_vulnerability_prerequisite_without_changing_co
     assert edges[0].confidence == 0.91
 
 
+def test_cve_patch_normalizes_case_variant_keys_on_nodes_and_edges() -> None:
+    now = datetime.now(UTC)
+    cve = "CVE-2024-12345"
+    lower_cve = cve.lower()
+    nodes = [
+        GraphNode(
+            NodeKind.ASSET,
+            "web",
+            "web",
+            is_external_entry=True,
+            open_cve_count=1,
+            metadata={
+                "vulnerability_status": {lower_cve: "open"},
+                "vulnerability_finding_counts": {lower_cve: 1},
+            },
+        ),
+        GraphNode(NodeKind.ASSET, "app", "app", criticality="critical"),
+    ]
+    edges = [
+        GraphEdge(
+            "case-variant-cve-edge",
+            NodeKind.ASSET,
+            "web",
+            NodeKind.ASSET,
+            "app",
+            RelationType.CONNECTS_TO,
+            FactKind.OBSERVED_FACT,
+            0.91,
+            now,
+            edge_metadata={
+                "network_reachable": True,
+                "requires_cve": lower_cve,
+                "vulnerability_status": {lower_cve: "open"},
+            },
+        )
+    ]
+    transform = RemediationTransform(
+        transform_type=RemediationTransformType.PATCH_VULNERABILITY,
+        asset_id="web",
+        cve_id=cve,
+    )
+
+    patched_nodes, patched_edges, applied = apply_sandbox_transforms(
+        nodes, edges, [transform]
+    )
+
+    assert applied[0]["status"] == "applied"
+    assert patched_nodes[0].metadata["vulnerability_status"] == {cve: "patched"}
+    assert patched_nodes[0].metadata["vulnerability_finding_counts"] == {cve: 0}
+    assert patched_nodes[0].open_cve_count == 0
+    assert patched_edges[0].edge_metadata["vulnerability_status"] == {cve: "patched"}
+
+    simulation = simulate_remediation(
+        nodes=nodes,
+        edges=edges,
+        constraints=PathSearchConstraints(
+            start_node_keys=["asset:web"],
+            target_node_keys=["asset:app"],
+            max_hops=1,
+        ),
+        transforms=[transform],
+    )
+    assert simulation.baseline.reachable_unbounded is True
+    assert simulation.modelled.reachable_unbounded is False
+    assert simulation.delta_summary["possible_reachability_eliminated"] is True
+
+
 def test_cve_patch_without_identifier_is_not_applied() -> None:
     now = datetime.now(UTC)
     nodes = [GraphNode(NodeKind.ASSET, "web", "web", open_cve_count=2)]
