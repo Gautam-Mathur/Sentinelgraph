@@ -150,6 +150,8 @@ def test_full_assessment_import_path_remediation_validation_and_report_workflow(
     bg = client.post(f"/api/v1/assessments/{baseline_id}/build-graph", headers=wf_headers)
     assert bg.status_code == 200, bg.text
     assert bg.json()["stats"]["edge_count"] > 0
+    assert "blocked_precondition_edge_count" in bg.json()["stats"]
+    assert bg.json()["stats"]["blocked_precondition_edge_count"] >= 0
 
     gp = client.post(
         "/api/v1/paths/generate",
@@ -165,6 +167,11 @@ def test_full_assessment_import_path_remediation_validation_and_report_workflow(
     )
     assert gp.status_code == 200, gp.text
     assert gp.json()["paths_count"] >= 1
+    assert gp.json()["candidate_search_complete"] is True
+    assert gp.json()["top_k_is_global"] is True
+    assert gp.json()["ranking_scope"] == "global_candidate_universe"
+    assert gp.json()["candidates_evaluated"] >= gp.json()["paths_count"]
+    assert "blocked_precondition_edge_count" in gp.json()
     top_path = gp.json()["paths"][0]
     assert top_path["scoring_version"] == "v1.0.0"
 
