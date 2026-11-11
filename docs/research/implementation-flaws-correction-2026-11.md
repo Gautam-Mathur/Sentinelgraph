@@ -1,57 +1,80 @@
-# Research implementation corrections — 10 November 2026
+# Research implementation corrections — 11 November 2026
 
-This note records three analytical-integrity corrections made against the main baseline `ff24df635d76c7ec8c5a3849bbddee86b1ddb526`.
+This note records implementation and research corrections made against the main baseline `ff24df635d76c7ec8c5a3849bbddee86b1ddb526`.
 
-The changes are on branch `fix/research-data-test-flaws-2026-11` in pull request #4. The implementation/test commit `2026607a10a18e46fa7a8c0b096cd48829c37450` passed GitHub Actions run #21: Ruff, backend migration/seed, 75 unit/integration/security/performance tests, frontend build, and Docker Compose validation. The pull request remains open and unmerged.
+The changes are on branch `fix/research-data-test-flaws-2026-11` in [pull request #4](https://github.com/Gautam-Mathur/Sentinelgraph/pull/4). At this research cut, the branch head is `d3543cc06d5bf36e02c07c23e666f101465fc04e`; it is **open and unmerged**.
 
-## 1. Candidate budget versus final priority order
+## 1. Candidate traversal cost versus priority-score ranking
 
-The path enumerator explores candidates in traversal-cost order (goal-directed best-first ordering for the `dijkstra` option; queue order for BFS) and then sorts evaluated paths by `priority_score`. A hard candidate cap or timeout means the final top-K is only top-K within the explored pool.
+The enumerator explores candidates in traversal-cost order (goal-directed best-first for the `dijkstra` option and queue order for BFS), then ranks evaluated paths by `priority_score`. A cap or timeout therefore creates a ranking over the evaluated candidate pool only.
 
-The branch adds three explicit fields:
+The engine exposes:
 - `candidate_search_complete`
 - `top_k_is_global`
-- `ranking_scope`, set to `global_candidate_universe` only after candidate enumeration completes, otherwise `evaluated_candidate_pool`.
+- `ranking_scope`: `global_candidate_universe` only after exhaustive candidate enumeration; otherwise `evaluated_candidate_pool`.
 
-The fields are included in `PathSearchOutput` and in every returned path's `algorithm_params`. A response clipped by `top_k` can still be globally ranked when the underlying candidate search completed. A response stopped by `max_candidates` or timeout cannot claim global ranking.
+These values are included in `PathSearchOutput`, per-path `algorithm_params`, and the path-generation API response. The response also includes the configured `max_candidates` and `top_k`. The Attack Paths page now has a candidate-budget input and explicitly warns when the ranking is pool-local. It describes a `top_k` response clip separately from an incomplete candidate search.
 
-The independent synthetic benchmark uses 100 trials × 300 candidate paths:
-- budget 25: mean global top-5 recall 82.6%; global best path missed in 2% of trials;
-- budget 50: mean global top-5 recall 94.6%;
-- budgets 100 and 200: mean recall 100% in this synthetic dataset, but search completeness remains 0% because 100 or 200 of 300 candidates were explored;
-- budget 400: all 300 synthetic candidates are explored, so search completeness is 100%.
+### Candidate-budget evidence (independent synthetic dataset)
 
-The observed 100% recall at 100/200 is not a universal guarantee. The important result is that the default cap of 200 is still a truncated search and therefore cannot be labelled as global top-K.
+The benchmark contains 100 trials per cap and 300 generated candidates per trial:
+
+| Candidate cap | Mean global top-5 recall | Global #1 missed | Candidate search complete | Global top-K claim allowed |
+|---:|---:|---:|---:|---:|
+| 25 | 82.6% | 2.0% | 0% | 0% |
+| 50 | 94.6% | 0.0% | 0% | 0% |
+| 100 | 100.0% | 0.0% | 0% | 0% |
+| 200 | 100.0% | 0.0% | 0% | 0% |
+| 400 | 100.0% | 0.0% | 100% | 100% |
+
+The 100% top-5 recall at caps 100 and 200 is only an observation about this particular synthetic dataset. Those runs still evaluate fewer than all 300 candidates. It is not a completeness guarantee. The default candidate cap of 200 must not be labelled as globally exhaustive.
+
+**Claim boundary:** even when `candidate_search_complete=true`, “global” means global only within the configured graph snapshot, scope, edge filters, hop limit, evidence policy and search budget. It is not a claim about unmodelled or out-of-scope paths.
 
 ## 2. CVE patch semantics
 
-The old research edge-case fixture incorrectly described confidence multiplied by 0.25 and retained only if the transformed confidence exceeded 0.20 as current application behaviour.
+The old `implementation_edge_cases.csv` fixture showed confidence multiplied by 0.25 and an edge retained when the transformed confidence met a 0.20 threshold. That fixture is now explicitly labelled **superseded fixture-only counterexample**, not the product's current patch semantics.
 
-The current `PATCH_VULNERABILITY` transform already records CVE state as `patched`, preserves evidence confidence, and updates the affected node/edge state. The vulnerability precondition evaluator then treats a patched CVE prerequisite as false. The remaining baseline flaw was that `build_networkx_graph` still inserted edges with explicitly false preconditions into its active graph, which allowed them to contribute to graph diagnostics even though path search blocked them.
+The product `PATCH_VULNERABILITY` transform:
+- sets the relevant CVE state to `patched` on the scoped endpoint and linked relationship records;
+- preserves the edge's evidence confidence (e.g. 0.90 remains 0.90);
+- updates the scoped open-finding count where supported.
 
-The branch now checks preconditions during graph construction:
-- false preconditions: edge excluded from the active graph;
-- unknown preconditions: edge retained as a conditional hypothesis;
-- graph-build diagnostics record `blocked_precondition_edge_count`.
-
-Evidence confidence is not modified by patching. The legacy 0.90 → 0.225 example remains in `implementation_edge_cases.csv` only as a superseded audit counterexample.
+The vulnerability precondition evaluator treats the patched CVE prerequisite as false. The remaining active-graph flaw was that the graph compiler could still insert a relationship whose prerequisite was explicitly false. Graph construction now excludes those edges and increments `blocked_precondition_edge_count`. Unknown prerequisites remain conditional rather than being silently treated as false.
 
 ## 3. Parallel relationship centrality
 
-The baseline calculated edge betweenness on a collapsed simple `DiGraph`, then copied the endpoint-pair value to every edge ID sharing that pair.
+The prior edge-centrality method collapsed a `MultiDiGraph` to a simple `DiGraph`, then copied one endpoint-pair score to all relationships sharing that pair.
 
-The branch calculates weighted edge betweenness directly on the keyed `MultiDiGraph` and maps results by `(source, target, edge_key)`. Relationships with different traversal weights can receive different values. Equal-cost parallel relationships may still tie, as expected.
+The corrected method calculates weighted edge betweenness on the keyed `MultiDiGraph` and records scores using `(source, target, edge_key)`. Node betweenness and SCC calculations remain on the simple endpoint projection. Equal-cost parallel edges may still tie, as expected.
 
-Node betweenness and strongly connected component analysis remain on the simple endpoint projection. The existing scale prototype therefore remains a historical baseline and is not a benchmark of the new multigraph edge-centrality calculation.
+A separate NetworkX 3.6.1 synthetic prototype (seed 20261111) contains 100 multigraph trials and 1,546 edge rows. It includes 282 parallel endpoint-pair instances, of which 279 produced differentiated keyed weighted scores. This is an algorithmic prototype only—not execution of the product source and not an application performance benchmark. The earlier scale study remains a historical baseline and was not re-run as product benchmarking after the centrality change.
 
-## Regression coverage
+## Regression tests and API coverage
 
-New/updated unit tests:
+Added or extended coverage:
 - `test_parallel_relationship_centrality_is_keyed_and_weight_aware`
 - `test_explicitly_false_cve_precondition_is_excluded_from_active_graph`
-- candidate-cap assertions for incomplete versus complete candidate enumeration and global top-K scope;
-- CVE patch simulation asserts evidence confidence is preserved and patched edges are absent from the compiled active graph.
+- candidate-budget tests for incomplete candidate enumeration and the ranking-scope flags;
+- `test_top_k_response_truncation_does_not_mark_candidate_search_incomplete`;
+- CVE patch simulation checks for preserved confidence and active-graph exclusion;
+- integration assertions for API-level `candidate_search_complete`, `top_k_is_global`, `ranking_scope` and `blocked_precondition_edge_count`.
 
-## Validation boundary
+Remediation metrics now separate:
+- `path_search_complete` / `candidate_search_truncated`: did candidate enumeration finish?
+- `path_results_truncated`: was the response clipped to top-K after search?
 
-These are source-level corrections and tests. The independent CSVs are synthetic research artifacts and do not execute the product. GitHub Actions run #21 passed for implementation/test commit `2026607a10a18e46fa7a8c0b096cd48829c37450` (Ruff, backend database setup, 75 tests, frontend build, Compose validation). The PR still needs review and merge before these changes become the `main` implementation.
+This prevents a complete enumeration followed by a top-K display cut from being reported as incomplete.
+
+## CI validation on the current branch head
+
+GitHub Actions run [#27](https://github.com/Gautam-Mathur/Sentinelgraph/actions/runs/42935930958) for branch head `d3543cc06d5bf36e02c07c23e666f101465fc04e` completed successfully:
+- backend: **76 passed, 1 warning**; Ruff checks passed;
+- frontend: typecheck, lint and build succeeded;
+- Compose: `docker compose config -q` succeeded.
+
+The single backend warning is a Starlette deprecation warning about using httpx with `starlette.testclient`; it did not fail the suite. These changes are CI-validated on the pull request branch, but remain unmerged and are not yet part of `main`.
+
+## Data-pack companion
+
+The companion research pack includes the row-level CSVs `candidate_budget_trials.csv`, `implementation_edge_cases.csv`, `parallel_edge_centrality_trials.csv`, and `parallel_edge_centrality_trial_summary.csv`, along with correction metadata and updated hashes. Workbook tabs mirror the raw tables. All synthetic multigraph/candidate-budget results are clearly labelled as independent synthetic prototypes.
