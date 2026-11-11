@@ -355,6 +355,7 @@ def build_assessment_graph(
         "edge_count": stats.edge_count,
         "suppressed_edge_count": stats.suppressed_edge_count,
         "expired_edge_count": stats.expired_edge_count,
+        "blocked_precondition_edge_count": stats.blocked_precondition_edge_count,
         "scc_cycle_count": stats.scc_cycle_count,
         "scc_cycles": stats.scc_cycles,
         "top_bridge_nodes": stats.top_bridge_nodes,
@@ -440,6 +441,7 @@ def get_assessment_graph_payload(
         "stats": assessment.graph_stats or {
             "node_count": stats.node_count,
             "edge_count": stats.edge_count,
+            "blocked_precondition_edge_count": stats.blocked_precondition_edge_count,
             "scc_cycle_count": stats.scc_cycle_count,
             "top_bridge_nodes": stats.top_bridge_nodes,
             "top_bridge_edges": stats.top_bridge_edges,
