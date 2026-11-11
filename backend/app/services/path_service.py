@@ -181,6 +181,9 @@ def generate_paths_for_assessment(
             "paths_found": len(created_paths),
             "candidates_evaluated": search_out.candidates_evaluated,
             "is_truncated": search_out.is_truncated,
+            "candidate_search_complete": search_out.candidate_search_complete,
+            "top_k_is_global": search_out.top_k_is_global,
+            "ranking_scope": search_out.ranking_scope,
         },
     )
     db.commit()
@@ -209,8 +212,15 @@ def generate_paths_for_assessment(
         "candidates_evaluated": search_out.candidates_evaluated,
         "is_truncated": search_out.is_truncated,
         "truncation_reason": search_out.truncation_reason,
+        "candidate_search_complete": search_out.candidate_search_complete,
+        "top_k_is_global": search_out.top_k_is_global,
+        "ranking_scope": search_out.ranking_scope,
+        "max_candidates": constraints.max_candidates,
+        "top_k": constraints.top_k,
         "duration_ms": search_out.duration_ms,
         "bridge_nodes": stats.top_bridge_nodes,
+        "bridge_edges": stats.top_bridge_edges,
+        "blocked_precondition_edge_count": stats.blocked_precondition_edge_count,
         "scc_cycles": stats.scc_cycles,
         "paths": [_serialize_attack_path(p) for p in created_paths],
     }
