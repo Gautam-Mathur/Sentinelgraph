@@ -88,6 +88,61 @@ def test_simulation_reports_reachability_when_candidate_enumeration_is_truncated
     assert sim.delta_summary["possible_residual_reachability"] is True
 
 
+
+def test_top_k_response_truncation_does_not_mark_candidate_search_incomplete() -> None:
+    now = datetime.now(UTC)
+    nodes = [
+        GraphNode(NodeKind.ASSET, "web", "web", is_external_entry=True),
+        GraphNode(NodeKind.ASSET, "db", "db", criticality="critical", is_crown_jewel=True),
+    ]
+    edges = [
+        GraphEdge(
+            "direct-connect",
+            NodeKind.ASSET,
+            "web",
+            NodeKind.ASSET,
+            "db",
+            RelationType.CONNECTS_TO,
+            FactKind.OBSERVED_FACT,
+            0.95,
+            now,
+            edge_metadata={"network_reachable": True},
+        ),
+        GraphEdge(
+            "direct-expose",
+            NodeKind.ASSET,
+            "web",
+            NodeKind.ASSET,
+            "db",
+            RelationType.EXPOSES,
+            FactKind.OBSERVED_FACT,
+            0.80,
+            now,
+            edge_metadata={"network_reachable": True},
+        ),
+    ]
+    comparison = simulate_remediation(
+        nodes=nodes,
+        edges=edges,
+        constraints=PathSearchConstraints(
+            start_node_keys=["asset:web"],
+            target_node_keys=["asset:db"],
+            max_hops=1,
+            max_candidates=10,
+            top_k=1,
+        ),
+        transforms=[],
+    )
+
+    assert comparison.baseline.total_paths == 1
+    assert comparison.baseline.path_search_complete is True
+    assert comparison.baseline.candidate_search_truncated is False
+    assert comparison.baseline.path_results_truncated is True
+    assert comparison.baseline.ranking_scope == "global_candidate_universe"
+    assert comparison.baseline.path_search_truncation_reason == "top_k_limit"
+    assert comparison.delta_summary["paths_eliminated_is_complete"] is True
+
+
 def test_patching_cve_invalidates_vulnerability_prerequisite_without_changing_confidence() -> None:
     now = datetime.now(UTC)
     nodes = [
