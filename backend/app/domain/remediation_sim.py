@@ -36,6 +36,9 @@ class SimulationMetrics:
     high_confidence_paths: int
     key_bridge_nodes: list[dict[str, Any]]
     path_search_complete: bool
+    candidate_search_truncated: bool
+    path_results_truncated: bool
+    ranking_scope: str
     path_search_truncation_reason: str | None
     path_count_semantics: str
     reachability_status: str
@@ -121,7 +124,13 @@ def _summarize_metrics(
         highest_path_score=round(highest_score, 2),
         high_confidence_paths=high_conf_count,
         key_bridge_nodes=build_stats.top_bridge_nodes[:5],
-        path_search_complete=not search_out.is_truncated,
+        # "complete" refers to candidate enumeration, not response clipping by top_k.
+        path_search_complete=search_out.candidate_search_complete,
+        candidate_search_truncated=not search_out.candidate_search_complete,
+        path_results_truncated=(
+            search_out.is_truncated and search_out.candidate_search_complete
+        ),
+        ranking_scope=search_out.ranking_scope,
         path_search_truncation_reason=search_out.truncation_reason,
         path_count_semantics="returned_candidate_count_not_total",
         reachability_status=reachability.status,
