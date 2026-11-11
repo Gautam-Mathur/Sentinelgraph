@@ -16,6 +16,7 @@ export const AttackPathsPage: React.FC = () => {
   const [maxHops, setMaxHops] = useState("6");
   const [minConfidence, setMinConfidence] = useState("0.2");
   const [topK, setTopK] = useState("10");
+  const [maxCandidates, setMaxCandidates] = useState("200");
   const [includeInferred, setIncludeInferred] = useState(true);
   const [excludedEnvs, setExcludedEnvs] = useState("");
   const [startKeys, setStartKeys] = useState("");
@@ -102,6 +103,7 @@ export const AttackPathsPage: React.FC = () => {
           max_hops: Number(maxHops),
           min_confidence: Number(minConfidence),
           top_k: Number(topK),
+          max_candidates: Number(maxCandidates),
           include_inferred: includeInferred,
           excluded_environments: excludedEnvs
             .split(",")
@@ -152,7 +154,7 @@ export const AttackPathsPage: React.FC = () => {
             assessment_id: selectedAssessmentId,
             algorithm,
             max_hops: Number(maxHops),
-            max_candidates: 200,
+            max_candidates: Number(maxCandidates),
             min_confidence: Number(minConfidence),
             top_k: Number(topK),
           },
@@ -280,6 +282,21 @@ export const AttackPathsPage: React.FC = () => {
           </div>
 
           <div className="grid-2">
+            <div className="field">
+              <label htmlFor="path-candidates">Candidate Enumeration Budget (1-2000)</label>
+              <input
+                id="path-candidates"
+                type="number"
+                min={1}
+                max={2000}
+                step={1}
+                value={maxCandidates}
+                onChange={(e) => setMaxCandidates(e.target.value)}
+              />
+              <small className="muted">
+                A higher cap may improve coverage but does not guarantee completeness if the time limit is reached.
+              </small>
+            </div>
             <div className="field">
               <label htmlFor="path-topk">Top-K Ranked Paths</label>
               <input
