@@ -21,7 +21,19 @@ export const AttackPathsPage: React.FC = () => {
   const [startKeys, setStartKeys] = useState("");
   const [targetKeys, setTargetKeys] = useState("");
   const [genNotice, setGenNotice] = useState<string>("");
-  const [truncatedBanner, setTruncatedBanner] = useState(false);
+  const [searchScope, setSearchScope] = useState<{
+    candidateSearchComplete: boolean | null;
+    topKIsGlobal: boolean | null;
+    rankingScope: string | null;
+    resultsTruncated: boolean;
+    truncationReason: string | null;
+  }>({
+    candidateSearchComplete: null,
+    topKIsGlobal: null,
+    rankingScope: null,
+    resultsTruncated: false,
+    truncationReason: null,
+  });
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
 
@@ -30,7 +42,27 @@ export const AttackPathsPage: React.FC = () => {
       const qs = assessmentId ? `?assessment_id=${assessmentId}` : "";
       const res = await apiRequest<{ items: AttackPathItem[] }>(`/paths${qs}`);
       setPaths(res.items);
-      setTruncatedBanner(res.items.some((p) => p.is_truncated));
+      const scopedPath = res.items.find(
+        (p) => typeof p.algorithm_params?.candidate_search_complete === "boolean"
+      );
+      if (scopedPath) {
+        setSearchScope({
+          candidateSearchComplete: Boolean(scopedPath.algorithm_params.candidate_search_complete),
+          topKIsGlobal: Boolean(scopedPath.algorithm_params.top_k_is_global),
+          rankingScope: String(scopedPath.algorithm_params.ranking_scope || "unknown"),
+          resultsTruncated: scopedPath.is_truncated &&
+            Boolean(scopedPath.algorithm_params.candidate_search_complete),
+          truncationReason: scopedPath.is_truncated ? "stored_result" : null,
+        });
+      } else if (res.items.length === 0) {
+        setSearchScope({
+          candidateSearchComplete: null,
+          topKIsGlobal: null,
+          rankingScope: null,
+          resultsTruncated: false,
+          truncationReason: null,
+        });
+      }
     } catch (err) {
       setError(err);
     }
@@ -56,6 +88,11 @@ export const AttackPathsPage: React.FC = () => {
       const res = await apiRequest<{
         paths_count: number;
         is_truncated: boolean;
+        candidate_search_complete: boolean;
+        top_k_is_global: boolean;
+        ranking_scope: string;
+        truncation_reason: string | null;
+        candidates_evaluated: number;
         duration_ms: number;
       }>("/paths/generate", {
         method: "POST",
@@ -84,8 +121,16 @@ export const AttackPathsPage: React.FC = () => {
             : null,
         },
       });
-      setTruncatedBanner(res.is_truncated);
-      setGenNotice(`Generated ${res.paths_count} deterministic candidate path(s) in ${res.duration_ms} ms.`);
+      setSearchScope({
+        candidateSearchComplete: res.candidate_search_complete,
+        topKIsGlobal: res.top_k_is_global,
+        rankingScope: res.ranking_scope,
+        resultsTruncated: res.is_truncated && res.candidate_search_complete,
+        truncationReason: res.truncation_reason,
+      });
+      setGenNotice(
+        `Generated ${res.paths_count} path(s) from ${res.candidates_evaluated} evaluated candidate(s) in ${res.duration_ms} ms.`
+      );
       await loadPaths(selectedAssessmentId);
     } catch (err) {
       setError(err);
@@ -144,12 +189,33 @@ export const AttackPathsPage: React.FC = () => {
         </div>
       )}
 
-      {truncatedBanner && (
+      {searchScope.candidateSearchComplete === false && (
         <div className="alert alert-warning" role="status">
-          <strong>
-            ⚠ Result Truncation Indicator: candidate enumeration reached query bounds
-            (max_candidates / top_k). Narrow filters or increase max_candidates for deeper search.
-          </strong>
+          <strong>⚠ Candidate search is incomplete.</strong>
+          <span>
+            The engine stopped at a candidate or time budget. These paths are ranked only within
+            the evaluated candidate pool ({searchScope.rankingScope || "evaluated_candidate_pool"});
+            the displayed top-K is not guaranteed to be the global highest-priority set.
+            {searchScope.truncationReason ? ` Stop reason: ${searchScope.truncationReason}.` : ""}
+            Narrow the graph scope or raise the candidate budget before treating this list as complete.
+          </span>
+        </div>
+      )}
+      {searchScope.candidateSearchComplete === true &&
+        searchScope.resultsTruncated && (
+          <div className="alert alert-info" role="status">
+            <strong>Top-K display limit applied after candidate enumeration.</strong>
+            <span>
+              All eligible candidates within the configured graph, filters, hop limit and evidence
+              policy were evaluated. The displayed top-K is globally ranked within that modelled
+              candidate universe, not beyond the configured model scope.
+            </span>
+          </div>
+        )}
+      {searchScope.candidateSearchComplete === null && paths.some((p) => p.is_truncated) && (
+        <div className="alert alert-warning" role="status">
+          <strong>Legacy result has truncation metadata but no candidate-scope flag.</strong>
+          <span>Global ranking completeness cannot be established for this stored result.</span>
         </div>
       )}
 
