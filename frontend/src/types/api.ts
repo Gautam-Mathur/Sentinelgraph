@@ -374,6 +374,9 @@ export interface GraphMetricSnapshot {
   total_paths: number;
   path_count_semantics?: string;
   path_search_complete?: boolean;
+  candidate_search_truncated?: boolean;
+  path_results_truncated?: boolean;
+  ranking_scope?: "global_candidate_universe" | "evaluated_candidate_pool" | string;
   path_search_truncation_reason?: string | null;
   high_confidence_paths: number;
   highest_path_score: number;
