@@ -439,14 +439,15 @@ def build_path_explanation(
     ]
 
     if edges is not None and path_nodes is not None and len(edges) == len(steps) and len(path_nodes) == len(steps) + 1:
-        for idx, (_st, edge_obj) in enumerate(zip(steps, edges, strict=True), start=1):
+        for idx, (st, edge_obj) in enumerate(zip(steps, edges, strict=True), start=1):
             src_n = path_nodes[idx - 1]
             tgt_n = path_nodes[idx]
-            capability_chain.append(
-                describe_capability_transition(
-                    step_order=idx, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
-                )
+            cap_entry = describe_capability_transition(
+                step_order=idx, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
             )
+            cap_entry["capabilities_added"] = list(st.capabilities_added)
+            cap_entry["capabilities_removed"] = list(st.capabilities_removed)
+            capability_chain.append(cap_entry)
             assumptions_register.extend(
                 extract_step_assumptions_structured(
                     step_order=idx, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
@@ -522,7 +523,10 @@ def build_path_explanation(
             "formula": breakdown.formula,
             "is_probability": breakdown.is_probability,
             "disclaimer": breakdown.disclaimer,
+            "ranking_mode": breakdown.ranking_mode,
             "priority_score": breakdown.priority_score,
+            "structural_score": breakdown.structural_score,
+            "evidence_weighted_score": breakdown.evidence_weighted_score,
             "impact_weight": breakdown.impact_weight,
             "exposure_factor": breakdown.exposure_factor,
             "privilege_factor": breakdown.privilege_factor,
@@ -548,6 +552,8 @@ def build_path_explanation(
                 "confidence": s.confidence,
                 "preconditions": s.preconditions,
                 "precondition_outcomes": s.precondition_outcomes,
+                "capabilities_added": s.capabilities_added,
+                "capabilities_removed": s.capabilities_removed,
                 "assumptions": s.assumptions,
                 "evidence_refs": s.evidence_refs,
             }

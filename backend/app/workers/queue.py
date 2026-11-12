@@ -42,6 +42,7 @@ class GeneratePathsJobPayload(BaseModel):
     max_candidates: int = 200
     min_confidence: float = 0.2
     top_k: int = 10
+    ranking_mode: Literal["structural", "evidence_weighted"] = "structural"
 
 
 class EnforceRetentionJobPayload(BaseModel):
@@ -157,6 +158,7 @@ def execute_job_in_worker(job_id_str: str, tenant_id_str: str) -> dict[str, Any]
                     max_candidates=validated_payload["max_candidates"],
                     top_k=validated_payload["top_k"],
                     include_inferred=True,
+                    ranking_mode=validated_payload.get("ranking_mode", "structural"),
                 )
                 summary = {"paths_count": result["paths_count"], "duration_ms": result["duration_ms"]}
             elif job.job_type == "generate_report":

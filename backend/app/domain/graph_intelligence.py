@@ -17,7 +17,12 @@ from app.domain.models import (
     RelationType,
     RemediationTransformType,
 )
-from app.domain.preconditions import evaluate_edge_preconditions, precondition_summary
+from app.domain.preconditions import (
+    apply_transition_effects,
+    evaluate_edge_preconditions,
+    initial_capabilities_for_node,
+    precondition_summary,
+)
 from app.domain.remediation_sim import (
     RemediationTransform,
     simulate_remediation,
@@ -742,6 +747,8 @@ def analyze_assessment_intelligence(
                 "determinism_hash": p.determinism_hash,
                 "title": p.title,
                 "priority_score": p.priority_score,
+                "structural_score": p.structural_score,
+                "evidence_weighted_score": p.evidence_weighted_score,
                 "hop_count": p.hop_count,
                 "evidence_confidence": p.evidence_confidence,
                 "start_node_key": f"{p.start_node_kind}:{p.start_node_id}",
@@ -924,6 +931,12 @@ def analyze_single_path_intelligence(
         extract_step_assumptions_structured,
     )
 
+    replay_caps: frozenset[str] = (
+        initial_capabilities_for_node(node_map[start_key])
+        if start_key in node_map
+        else frozenset()
+    )
+
     for st in path_steps:
         step_order = int(st["step_order"])
         rel_id = str(st.get("relationship_id") or "")
@@ -1018,7 +1031,15 @@ def analyze_single_path_intelligence(
             cap = describe_capability_transition(
                 step_order=step_order, edge=edge_obj, src_node=src_n, tgt_node=tgt_n
             )
-            cap["precondition_outcomes"] = evaluate_edge_preconditions(edge_obj, src_n, tgt_n)
+            cap["precondition_outcomes"] = evaluate_edge_preconditions(
+                edge_obj, src_n, tgt_n, capability_state=replay_caps
+            )
+            next_caps, added_caps, removed_caps = apply_transition_effects(
+                edge_obj, src_n, tgt_n, replay_caps
+            )
+            replay_caps = next_caps
+            cap["capabilities_added"] = added_caps
+            cap["capabilities_removed"] = removed_caps
             cap["precondition_summary"] = precondition_summary(cap["precondition_outcomes"])
             cap["paths_in_assessment_count"] = assess_hits
             cap["same_pair_bypasses_if_removed"] = len(pair_after)

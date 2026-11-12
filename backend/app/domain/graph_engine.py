@@ -17,11 +17,15 @@ from app.domain.models import (
     GraphNode,
     PathSearchConstraints,
     PathStepData,
+    RelationType,
 )
 from app.domain.path_semantics import build_path_explanation, build_step_explanation
 from app.domain.preconditions import (
+    apply_transition_effects,
     edge_preconditions_allow,
     evaluate_edge_preconditions,
+    extract_referenced_capabilities,
+    initial_capabilities_for_node,
     precondition_summary,
 )
 from app.domain.scoring import SCORING_VERSION, score_attack_path
@@ -75,10 +79,27 @@ class ReachabilityVerification:
 
 
 def edge_traversal_cost(edge: GraphEdge) -> float:
-    """Lower cost means higher attacker feasibility / higher evidence confidence."""
+    """Confidence-weighted cost (used for centrality diagnostics and evidence_weighted mode)."""
     conf = max(0.05, min(1.0, edge.confidence))
     fact_penalty = 1.45 if edge.fact_kind == FactKind.INFERRED_RELATIONSHIP else 1.0
     return round((1.15 - conf) * fact_penalty + 0.1, 6)
+
+
+def structural_edge_cost(edge: GraphEdge) -> float:
+    """Strictly positive hop/privilege cost independent of scanner confidence or fact_kind."""
+    if edge.relation_type == RelationType.CAN_ADMINISTER:
+        return 0.85
+    if edge.relation_type in (RelationType.HAS_ROLE, RelationType.TRUSTS):
+        return 0.90
+    if edge.relation_type in (RelationType.MEMBER_OF, RelationType.EXPOSES):
+        return 0.95
+    return 1.0
+
+
+def _search_edge_cost(edge: GraphEdge, constraints: PathSearchConstraints) -> float:
+    if constraints.ranking_mode == "evidence_weighted":
+        return edge_traversal_cost(edge)
+    return structural_edge_cost(edge)
 
 
 def build_networkx_graph(
@@ -228,6 +249,8 @@ def _edge_allowed(
     constraints: PathSearchConstraints,
     source_node: GraphNode | None = None,
     target_node: GraphNode | None = None,
+    *,
+    capability_state: frozenset[str] | set[str] | None = None,
 ) -> bool:
     if edge.is_suppressed or edge.confidence < constraints.min_confidence:
         return False
@@ -240,6 +263,7 @@ def _edge_allowed(
         allow_unknown=constraints.allow_unknown_preconditions,
         source_node=source_node,
         target_node=target_node,
+        capability_state=capability_state,
     )
 
 
@@ -256,6 +280,7 @@ def _compute_determinism_hash(
     algorithm: str,
     scoring_version: str,
     allow_unknown_preconditions: bool = True,
+    ranking_mode: str = "structural",
 ) -> str:
     canonical = json.dumps(
         {
@@ -265,6 +290,7 @@ def _compute_determinism_hash(
             "algorithm": algorithm,
             "scoring_version": scoring_version,
             "allow_unknown_preconditions": allow_unknown_preconditions,
+            "ranking_mode": ranking_mode,
         },
         sort_keys=True,
     )
@@ -275,11 +301,25 @@ def _compute_target_lower_bounds(
     graph: nx.MultiDiGraph,
     target_set: set[str],
     constraints: PathSearchConstraints,
+    *,
+    has_stateful_capabilities: bool = False,
 ) -> tuple[dict[str, float], dict[str, int]]:
-    """Reverse multi-source bounds for admissible A* pruning and hop-budget cutoff."""
+    """Reverse multi-source bounds for admissible A* pruning and hop-budget cutoff.
+
+    When referenced capabilities exist and allow_unknown_preconditions=False, a transition
+    whose capability clause is UNKNOWN at static build time can become TRUE once an
+    upstream transition adds the capability. Relaxing allow_unknown_preconditions only in
+    this reverse lower-bound pass preserves strict admissibility while runtime search
+    still enforces the exact capability state.
+    """
+    lb_constraints = (
+        replace(constraints, allow_unknown_preconditions=True)
+        if has_stateful_capabilities and not constraints.allow_unknown_preconditions
+        else constraints
+    )
     rev_filtered = nx.DiGraph()
     for nkey, data in graph.nodes(data=True):
-        if _node_allowed(data["node"], constraints):
+        if _node_allowed(data["node"], lb_constraints):
             rev_filtered.add_node(nkey)
 
     for u, v, _, data in graph.edges(keys=True, data=True):
@@ -287,10 +327,14 @@ def _compute_target_lower_bounds(
             continue
         edge_obj: GraphEdge = data["edge"]
         if not _edge_allowed(
-            edge_obj, constraints, graph.nodes[u]["node"], graph.nodes[v]["node"]
+            edge_obj,
+            lb_constraints,
+            graph.nodes[u]["node"],
+            graph.nodes[v]["node"],
+            capability_state=None,
         ):
             continue
-        w = float(data["weight"])
+        w = _search_edge_cost(edge_obj, lb_constraints)
         if rev_filtered.has_edge(v, u):
             if w < float(rev_filtered[v][u]["weight"]):
                 rev_filtered[v][u]["weight"] = w
@@ -316,53 +360,71 @@ def _compute_target_lower_bounds(
     return dist_to_target, hops_to_target
 
 
-
 def _bfs_reachability_witness(
     graph: nx.MultiDiGraph,
     constraints: PathSearchConstraints,
     *,
     allow_unknown_preconditions: bool,
     hop_limit: int | None,
-) -> tuple[list[str], list[str], list[str], int, int, list[str]]:
-    """Return one shortest witness using the same transition and scope filters as path search."""
+) -> tuple[list[str], list[str], list[str], int, int, list[str], bool]:
+    """Return one shortest witness using the same stateful transition filters as path search."""
     effective_constraints = replace(
         constraints, allow_unknown_preconditions=allow_unknown_preconditions
     )
+    all_edges = [data["edge"] for _, _, _, data in graph.edges(keys=True, data=True)]
+    all_nodes = [data["node"] for _, data in graph.nodes(data=True)]
+    relevant_caps = extract_referenced_capabilities(all_edges, all_nodes)
+
+    def _state_sig(cap_state: frozenset[str]) -> frozenset[str]:
+        return cap_state & relevant_caps if relevant_caps else frozenset()
+
     starts = sorted(
         key
         for key in constraints.start_node_keys
         if key in graph and _node_allowed(graph.nodes[key]["node"], effective_constraints)
     )
     targets = set(constraints.target_node_keys)
-    queue: deque[tuple[str, int]] = deque()
-    parent: dict[str, tuple[str, str] | None] = {}
+    # Each entry: (node_key, depth, full_cap_state, parent_state_idx, via_edge_id)
+    states: list[tuple[str, int, frozenset[str], int | None, str | None]] = []
+    queue: deque[int] = deque()
+    visited: set[tuple[str, frozenset[str]]] = set()
+    max_bfs_states = max(50_000, graph.number_of_nodes() * 64)
+    complete = True
+
     for start in starts:
-        if start not in parent:
-            parent[start] = None
-            queue.append((start, 0))
+        init_caps = initial_capabilities_for_node(graph.nodes[start]["node"])
+        sig = (start, _state_sig(init_caps))
+        if sig not in visited:
+            visited.add(sig)
+            idx = len(states)
+            states.append((start, 0, init_caps, None, None))
+            queue.append(idx)
 
     examined_nodes = 0
     examined_edges = 0
-    found_target: str | None = None
+    found_target_state_idx: int | None = None
     reached_targets: set[str] = set()
     while queue:
-        current, depth = queue.popleft()
+        if len(visited) >= max_bfs_states:
+            complete = False
+            break
+        state_idx = queue.popleft()
+        current, depth, cap_state, _, _ = states[state_idx]
         examined_nodes += 1
         if current in targets and depth > 0:
             reached_targets.add(current)
-            if found_target is None:
-                found_target = current
+            if found_target_state_idx is None:
+                found_target_state_idx = state_idx
         if hop_limit is not None and depth >= hop_limit:
             continue
 
+        src_node: GraphNode = graph.nodes[current]["node"]
         neighbors = sorted(
             graph.out_edges(current, keys=True, data=True),
             key=lambda item: (item[1], item[2]),
         )
         for _, next_key, edge_id, data in neighbors:
             examined_edges += 1
-            if next_key in parent:
-                continue
             edge: GraphEdge = data["edge"]
             next_node: GraphNode = graph.nodes[next_key]["node"]
             if not _node_allowed(next_node, effective_constraints):
@@ -370,40 +432,66 @@ def _bfs_reachability_witness(
             if not _edge_allowed(
                 edge,
                 effective_constraints,
-                graph.nodes[current]["node"],
+                src_node,
                 next_node,
+                capability_state=cap_state,
             ):
                 continue
-            parent[next_key] = (current, str(edge_id))
-            queue.append((next_key, depth + 1))
+            next_caps, _, _ = apply_transition_effects(edge, src_node, next_node, cap_state)
+            next_sig = (next_key, _state_sig(next_caps))
+            if next_sig in visited:
+                continue
+            visited.add(next_sig)
+            next_idx = len(states)
+            states.append((next_key, depth + 1, next_caps, state_idx, str(edge_id)))
+            queue.append(next_idx)
+            if len(visited) >= max_bfs_states:
+                complete = False
+                break
 
-    if found_target is None:
-        return [], [], [], examined_nodes, examined_edges, sorted(reached_targets)
+    if found_target_state_idx is None:
+        return [], [], [], examined_nodes, examined_edges, sorted(reached_targets), complete
 
-    node_path = [found_target]
+    node_path: list[str] = []
     edge_path: list[str] = []
-    cursor = found_target
-    while parent[cursor] is not None:
-        previous, edge_id = parent[cursor]  # type: ignore[misc]
-        node_path.append(previous)
-        edge_path.append(edge_id)
-        cursor = previous
+    cursor: int | None = found_target_state_idx
+    while cursor is not None:
+        n_key, _, _, parent_idx, via_edge = states[cursor]
+        node_path.append(n_key)
+        if via_edge is not None:
+            edge_path.append(via_edge)
+        cursor = parent_idx
     node_path.reverse()
     edge_path.reverse()
 
-    conditional_ids = [
-        edge_id
-        for idx, edge_id in enumerate(edge_path)
-        if any(
-            outcome["status"] == "unknown"
-            for outcome in evaluate_edge_preconditions(
-                graph.get_edge_data(node_path[idx], node_path[idx + 1], edge_id)["edge"],
-                graph.nodes[node_path[idx]]["node"],
-                graph.nodes[node_path[idx + 1]]["node"],
-            )
-        )
-    ]
-    return node_path, edge_path, conditional_ids, examined_nodes, examined_edges, sorted(reached_targets)
+    conditional_ids: list[str] = []
+    if node_path:
+        replay_caps = initial_capabilities_for_node(graph.nodes[node_path[0]]["node"])
+        for idx, edge_id in enumerate(edge_path):
+            src_n = graph.nodes[node_path[idx]]["node"]
+            tgt_n = graph.nodes[node_path[idx + 1]]["node"]
+            edge_obj = graph.get_edge_data(node_path[idx], node_path[idx + 1], edge_id)["edge"]
+            if any(
+                outcome["status"] == "unknown"
+                for outcome in evaluate_edge_preconditions(
+                    edge_obj,
+                    src_n,
+                    tgt_n,
+                    capability_state=replay_caps,
+                )
+            ):
+                conditional_ids.append(edge_id)
+            replay_caps, _, _ = apply_transition_effects(edge_obj, src_n, tgt_n, replay_caps)
+
+    return (
+        node_path,
+        edge_path,
+        conditional_ids,
+        examined_nodes,
+        examined_edges,
+        sorted(reached_targets),
+        complete,
+    )
 
 
 def verify_reachability(
@@ -416,37 +504,58 @@ def verify_reachability(
     confirmed reachability requires every transition prerequisite to be known true.
     The unbounded pass prevents max_hops from being mistaken for graph disconnection.
     """
-    possible_nodes, possible_edges, conditional_edges, examined_nodes, examined_edges, possible_targets = (
-        _bfs_reachability_witness(
-            graph,
-            constraints,
-            allow_unknown_preconditions=True,
-            hop_limit=None,
-        )
+    (
+        possible_nodes,
+        possible_edges,
+        conditional_edges,
+        examined_nodes,
+        examined_edges,
+        possible_targets,
+        possible_complete,
+    ) = _bfs_reachability_witness(
+        graph,
+        constraints,
+        allow_unknown_preconditions=True,
+        hop_limit=None,
     )
-    _, bounded_edges, _, bounded_examined_nodes, bounded_examined_edges, bounded_targets = (
-        _bfs_reachability_witness(
-            graph,
-            constraints,
-            allow_unknown_preconditions=True,
-            hop_limit=constraints.max_hops,
-        )
+    (
+        _,
+        bounded_edges,
+        _,
+        bounded_examined_nodes,
+        bounded_examined_edges,
+        bounded_targets,
+        bounded_complete,
+    ) = _bfs_reachability_witness(
+        graph,
+        constraints,
+        allow_unknown_preconditions=True,
+        hop_limit=constraints.max_hops,
     )
-    _, confirmed_edges, _, confirmed_examined_nodes, confirmed_examined_edges, confirmed_targets = (
-        _bfs_reachability_witness(
-            graph,
-            constraints,
-            allow_unknown_preconditions=False,
-            hop_limit=None,
-        )
+    (
+        _,
+        confirmed_edges,
+        _,
+        confirmed_examined_nodes,
+        confirmed_examined_edges,
+        confirmed_targets,
+        confirmed_complete,
+    ) = _bfs_reachability_witness(
+        graph,
+        constraints,
+        allow_unknown_preconditions=False,
+        hop_limit=None,
     )
     reachable = bool(possible_targets)
     bounded_reachable = bool(bounded_targets)
     confirmed_reachable = bool(confirmed_targets)
+    complete = possible_complete and bounded_complete and confirmed_complete
     if reachable and bounded_reachable:
         status = "REACHABLE_PATH_EXISTS"
     elif reachable:
         status = "REACHABLE_OUTSIDE_HOP_LIMIT"
+    elif not complete:
+        status = "INDETERMINATE"
     else:
         status = "NO_REACHABILITY_WITHIN_MODEL"
 
@@ -454,7 +563,7 @@ def verify_reachability(
         reachable_unbounded=reachable,
         reachable_within_max_hops=bounded_reachable,
         confirmed_reachable_unbounded=confirmed_reachable,
-        complete=True,
+        complete=complete,
         status=status,
         witness_path_node_keys=possible_nodes,
         witness_path_edge_ids=possible_edges,
@@ -486,7 +595,16 @@ def find_attack_paths(
             duration_ms=round((time.perf_counter() - t0) * 1000.0, 2),
         )
 
-    dist_to_target, hops_to_target = _compute_target_lower_bounds(graph, target_set, constraints)
+    all_edges = [data["edge"] for _, _, _, data in graph.edges(keys=True, data=True)]
+    all_nodes = [data["node"] for _, data in graph.nodes(data=True)]
+    relevant_caps = extract_referenced_capabilities(all_edges, all_nodes)
+
+    dist_to_target, hops_to_target = _compute_target_lower_bounds(
+        graph,
+        target_set,
+        constraints,
+        has_stateful_capabilities=bool(relevant_caps),
+    )
 
     candidates: list[tuple[float, list[str], list[GraphEdge]]] = []
     candidates_evaluated = 0
@@ -496,11 +614,11 @@ def find_attack_paths(
     seen_edge_sequences: set[tuple[str, ...]] = set()
 
     if constraints.algorithm == AlgorithmType.BFS:
-        queue: deque[tuple[str, list[str], list[GraphEdge]]] = deque()
+        queue: deque[tuple[str, list[str], list[GraphEdge], frozenset[str]]] = deque()
         for sk in start_keys:
             start_node: GraphNode = graph.nodes[sk]["node"]
             if _node_allowed(start_node, constraints) and sk in hops_to_target:
-                queue.append((sk, [sk], []))
+                queue.append((sk, [sk], [], initial_capabilities_for_node(start_node)))
 
         while queue:
             if time.perf_counter() > deadline:
@@ -514,12 +632,12 @@ def find_attack_paths(
                 truncation_reason = "max_candidates_reached"
                 break
 
-            curr_key, path_keys, edge_seq = queue.popleft()
+            curr_key, path_keys, edge_seq, cap_state = queue.popleft()
             if curr_key in target_set and len(edge_seq) > 0:
                 seq_sig = tuple(e.edge_id for e in edge_seq)
                 if seq_sig not in seen_edge_sequences:
                     seen_edge_sequences.add(seq_sig)
-                    total_cost = sum(edge_traversal_cost(e) for e in edge_seq)
+                    total_cost = sum(_search_edge_cost(e, constraints) for e in edge_seq)
                     candidates.append((total_cost, path_keys, edge_seq))
                     candidates_evaluated += 1
                 continue
@@ -527,6 +645,7 @@ def find_attack_paths(
             if len(edge_seq) >= constraints.max_hops:
                 continue
 
+            curr_node: GraphNode = graph.nodes[curr_key]["node"]
             neighbors = sorted(graph.out_edges(curr_key, keys=True, data=True), key=lambda x: (x[1], x[2]))
             for _, nxt_key, _, data in neighbors:
                 if nxt_key in path_keys:
@@ -536,21 +655,34 @@ def find_attack_paths(
                     continue
                 edge_obj: GraphEdge = data["edge"]
                 nxt_node: GraphNode = graph.nodes[nxt_key]["node"]
-                if not _edge_allowed(edge_obj, constraints, graph.nodes[curr_key]["node"], nxt_node):
-                    continue
                 if not _node_allowed(nxt_node, constraints):
                     continue
-                queue.append((nxt_key, [*path_keys, nxt_key], [*edge_seq, edge_obj]))
+                if not _edge_allowed(
+                    edge_obj,
+                    constraints,
+                    curr_node,
+                    nxt_node,
+                    capability_state=cap_state,
+                ):
+                    continue
+                next_caps, _, _ = apply_transition_effects(edge_obj, curr_node, nxt_node, cap_state)
+                queue.append((nxt_key, [*path_keys, nxt_key], [*edge_seq, edge_obj], next_caps))
     else:
         # Deterministic goal-directed A* best-first simple-path enumeration (exact admissible lower bound)
-        heap: list[tuple[float, float, int, tuple[str, ...], list[str], list[GraphEdge]]] = []
+        # Heap tuple places monotonic push_seq immediately after key_tie so frozensets/lists are never compared.
+        heap: list[
+            tuple[float, float, int, tuple[str, ...], int, list[str], list[GraphEdge], frozenset[str]]
+        ] = []
+        push_seq = 0
         for sk in start_keys:
             start_node = graph.nodes[sk]["node"]
             if _node_allowed(start_node, constraints) and sk in dist_to_target:
                 rem_h = hops_to_target.get(sk, 0)
                 if rem_h <= constraints.max_hops:
                     f_init = round(float(dist_to_target[sk]), 6)
-                    heapq.heappush(heap, (f_init, 0.0, 0, (sk,), [sk], []))
+                    init_caps = initial_capabilities_for_node(start_node)
+                    push_seq += 1
+                    heapq.heappush(heap, (f_init, 0.0, 0, (sk,), push_seq, [sk], [], init_caps))
 
         while heap:
             if time.perf_counter() > deadline:
@@ -564,7 +696,7 @@ def find_attack_paths(
                 truncation_reason = "max_candidates_reached"
                 break
 
-            _, cost, hop_len, key_tie, path_keys, edge_seq = heapq.heappop(heap)
+            _, cost, hop_len, key_tie, _, path_keys, edge_seq, cap_state = heapq.heappop(heap)
             curr_key = path_keys[-1]
 
             if curr_key in target_set and hop_len > 0:
@@ -578,6 +710,7 @@ def find_attack_paths(
             if hop_len >= constraints.max_hops:
                 continue
 
+            curr_node = graph.nodes[curr_key]["node"]
             neighbors = sorted(graph.out_edges(curr_key, keys=True, data=True), key=lambda x: (x[1], x[2]))
             for _, nxt_key, edge_id, data in neighbors:
                 if nxt_key in path_keys:
@@ -590,16 +723,34 @@ def find_attack_paths(
                     continue
                 edge_obj = data["edge"]
                 nxt_node = graph.nodes[nxt_key]["node"]
-                if not _edge_allowed(edge_obj, constraints, graph.nodes[curr_key]["node"], nxt_node):
-                    continue
                 if not _node_allowed(nxt_node, constraints):
                     continue
-                new_cost = round(cost + float(data["weight"]), 6)
+                if not _edge_allowed(
+                    edge_obj,
+                    constraints,
+                    curr_node,
+                    nxt_node,
+                    capability_state=cap_state,
+                ):
+                    continue
+                step_cost = _search_edge_cost(edge_obj, constraints)
+                new_cost = round(cost + step_cost, 6)
                 f_score = round(new_cost + float(rem_cost), 6)
                 new_tie = (*key_tie, nxt_key, edge_id)
+                next_caps, _, _ = apply_transition_effects(edge_obj, curr_node, nxt_node, cap_state)
+                push_seq += 1
                 heapq.heappush(
                     heap,
-                    (f_score, new_cost, hop_len + 1, new_tie, [*path_keys, nxt_key], [*edge_seq, edge_obj]),
+                    (
+                        f_score,
+                        new_cost,
+                        hop_len + 1,
+                        new_tie,
+                        push_seq,
+                        [*path_keys, nxt_key],
+                        [*edge_seq, edge_obj],
+                        next_caps,
+                    ),
                 )
 
     algo_params = {
@@ -609,6 +760,7 @@ def find_attack_paths(
         "min_confidence": constraints.min_confidence,
         "top_k": constraints.top_k,
         "include_inferred": constraints.include_inferred,
+        "ranking_mode": constraints.ranking_mode,
         "candidate_search_complete": candidate_search_complete,
         "top_k_is_global": candidate_search_complete,
         "ranking_scope": (
@@ -627,6 +779,7 @@ def find_attack_paths(
         path_nodes = [graph.nodes[k]["node"] for k in path_keys]
         start_n = path_nodes[0]
         target_n = path_nodes[-1]
+        replay_caps = initial_capabilities_for_node(start_n)
         step_datas: list[PathStepData] = []
         for idx, edge_obj in enumerate(edge_seq, start=1):
             src_n = path_nodes[idx - 1]
@@ -637,7 +790,15 @@ def find_attack_paths(
                 src_node=src_n,
                 tgt_node=tgt_n,
             )
-            step_data.precondition_outcomes = evaluate_edge_preconditions(edge_obj, src_n, tgt_n)
+            step_data.precondition_outcomes = evaluate_edge_preconditions(
+                edge_obj, src_n, tgt_n, capability_state=replay_caps
+            )
+            next_caps, added_caps, removed_caps = apply_transition_effects(
+                edge_obj, src_n, tgt_n, replay_caps
+            )
+            step_data.capabilities_added = added_caps
+            step_data.capabilities_removed = removed_caps
+            replay_caps = next_caps
             for outcome in step_data.precondition_outcomes:
                 step_data.preconditions.append(
                     f"{outcome['kind']}: {outcome['status']} — {outcome['reason']}"
@@ -657,6 +818,7 @@ def find_attack_paths(
             target_node=target_n,
             steps=step_datas,
             path_nodes=path_nodes,
+            ranking_mode=constraints.ranking_mode,
         )
         assumptions, narrative, trace = build_path_explanation(
             start_node=start_n,
@@ -675,6 +837,7 @@ def find_attack_paths(
             constraints.algorithm.value,
             SCORING_VERSION,
             constraints.allow_unknown_preconditions,
+            constraints.ranking_mode,
         )
         scored_results.append(
             AttackPathResult(
@@ -694,6 +857,8 @@ def find_attack_paths(
                 privilege_factor=breakdown.privilege_factor,
                 evidence_confidence=breakdown.evidence_confidence,
                 missing_data_penalty=breakdown.missing_data_penalty,
+                structural_score=breakdown.structural_score,
+                evidence_weighted_score=breakdown.evidence_weighted_score,
                 hop_count=len(step_datas),
                 is_truncated=is_truncated,
                 assumptions=assumptions,

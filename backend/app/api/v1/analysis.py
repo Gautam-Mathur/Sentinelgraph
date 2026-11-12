@@ -83,6 +83,7 @@ class GeneratePathsRequest(BaseModel):
     top_k: int = Field(default=10, ge=1, le=100)
     include_inferred: bool = True
     target_criticalities: list[str] | None = None
+    ranking_mode: Literal["structural", "evidence_weighted"] = "structural"
 
 
 class TransformSpec(BaseModel):
@@ -305,6 +306,7 @@ def generate_paths_endpoint(
         top_k=body.top_k,
         include_inferred=body.include_inferred,
         target_criticalities=body.target_criticalities,
+        ranking_mode=body.ranking_mode,
     )
 
 

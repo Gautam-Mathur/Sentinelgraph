@@ -36,6 +36,7 @@ def generate_paths_for_assessment(
     top_k: int,
     include_inferred: bool,
     target_criticalities: list[str] | None = None,
+    ranking_mode: str = "structural",
 ) -> dict[str, Any]:
     require_permission(ctx.role, Permission.PATH_GENERATE)
     settings = get_settings()
@@ -96,6 +97,7 @@ def generate_paths_for_assessment(
         top_k=top_k,
         timeout_seconds=settings.path_search_timeout_seconds,
         include_inferred=include_inferred,
+        ranking_mode=ranking_mode,
     )
 
     search_out = find_attack_paths(nx_graph, constraints)
@@ -298,6 +300,7 @@ def get_attack_path_intelligence(
     min_conf = float(algo_params.get("min_confidence", 0.2))
     max_hops = max(ap.hop_count, int(algo_params.get("max_hops", 6)))
     include_inferred = bool(algo_params.get("include_inferred", True))
+    ranking_mode = str(algo_params.get("ranking_mode") or "structural")
 
     constraints = PathSearchConstraints(
         start_node_keys=start_keys,
@@ -308,6 +311,7 @@ def get_attack_path_intelligence(
         max_candidates=200,
         top_k=50,
         include_inferred=include_inferred,
+        ranking_mode=ranking_mode,
     )
 
     step_dicts = [
@@ -346,6 +350,25 @@ def get_attack_path_intelligence(
 
 
 def _serialize_attack_path(ap: AttackPath, include_steps: bool = True) -> dict[str, Any]:
+    trace_scoring = (ap.explanation_trace or {}).get("scoring") or {}
+    structural_score = trace_scoring.get("structural_score")
+    if structural_score is None:
+        structural_score = round(
+            min(100.0, max(0.0, 100.0 * ap.impact_weight * ap.exposure_factor * ap.privilege_factor)),
+            2,
+        )
+    evidence_weighted_score = trace_scoring.get("evidence_weighted_score")
+    if evidence_weighted_score is None:
+        evidence_weighted_score = round(
+            min(
+                100.0,
+                max(
+                    0.0,
+                    float(structural_score) * ap.evidence_confidence * ap.missing_data_penalty,
+                ),
+            ),
+            2,
+        )
     data: dict[str, Any] = {
         "id": str(ap.id),
         "assessment_id": str(ap.assessment_id),
@@ -360,6 +383,8 @@ def _serialize_attack_path(ap: AttackPath, include_steps: bool = True) -> dict[s
         "algorithm_params": ap.algorithm_params,
         "scoring_version": ap.scoring_version,
         "priority_score": ap.priority_score,
+        "structural_score": float(structural_score),
+        "evidence_weighted_score": float(evidence_weighted_score),
         "impact_weight": ap.impact_weight,
         "exposure_factor": ap.exposure_factor,
         "privilege_factor": ap.privilege_factor,

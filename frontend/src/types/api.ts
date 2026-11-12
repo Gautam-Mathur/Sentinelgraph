@@ -345,6 +345,8 @@ export interface AttackPathItem {
   algorithm_params: Record<string, unknown>;
   scoring_version: string;
   priority_score: number;
+  structural_score?: number;
+  evidence_weighted_score?: number;
   impact_weight: number;
   exposure_factor: number;
   privilege_factor: number;

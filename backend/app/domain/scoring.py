@@ -44,14 +44,17 @@ class ScoringModelConfig:
 
 
 SCORING_MODEL = ScoringModelConfig(
-    version="v1.0.0",
+    version="v2.0.0",
     formula=(
-        "priority_score = clamp(0, 100, 100 * impact_weight * exposure_factor * "
-        "privilege_factor * evidence_confidence * missing_data_penalty)"
+        "structural_score = clamp(0, 100, 100 * impact_weight * exposure_factor * privilege_factor); "
+        "priority_score = structural_score (ranking_mode='structural') | "
+        "structural_score * evidence_confidence * missing_data_penalty (ranking_mode='evidence_weighted')"
     ),
     disclaimer=(
         "Weighted, normalised priority ranking (0-100) for remediation triage. "
-        "Not a calibrated statistical probability of breach."
+        "In v2.0.0, priority_score ranks by structural hazard (impact, exposure, privilege) and reports "
+        "evidence_confidence and missing_data_penalty separately so uncalibrated scanner confidence "
+        "does not demote critical attack paths. Not a calibrated statistical probability of breach."
     ),
     criticality_weights={"critical": 1.0, "high": 0.8, "medium": 0.5, "low": 0.25},
     default_impact=0.5,
@@ -102,6 +105,9 @@ class ScoreBreakdown:
     privilege_factor: float
     evidence_confidence: float
     missing_data_penalty: float
+    structural_score: float = 0.0
+    evidence_weighted_score: float = 0.0
+    ranking_mode: str = "structural"
     scoring_version: str = SCORING_VERSION
     formula: str = SCORING_FORMULA
     is_probability: bool = False
@@ -114,8 +120,10 @@ def score_attack_path(
     target_node: GraphNode,
     steps: list[PathStepData],
     path_nodes: list[GraphNode],
+    ranking_mode: str = "structural",
 ) -> ScoreBreakdown:
     cfg = SCORING_MODEL
+    mode = ranking_mode if ranking_mode in ("structural", "evidence_weighted") else "structural"
     if not steps:
         return ScoreBreakdown(
             priority_score=0.0,
@@ -124,6 +132,9 @@ def score_attack_path(
             privilege_factor=cfg.privilege_floor,
             evidence_confidence=cfg.evidence_floor,
             missing_data_penalty=cfg.missing_data_floor,
+            structural_score=0.0,
+            evidence_weighted_score=0.0,
+            ranking_mode=mode,
         )
 
     # 1. Impact weight: target criticality, crown-jewel and domain-admin overrides.
@@ -208,16 +219,16 @@ def score_attack_path(
         min(cfg.missing_data_ceiling, max(cfg.missing_data_floor, penalty)), 4
     )
 
-    raw = (
-        100.0
-        * impact_weight
-        * exposure_factor
-        * privilege_factor
-        * evidence_confidence
-        * missing_data_penalty
+    structural_raw = 100.0 * impact_weight * exposure_factor * privilege_factor
+    structural_score = round(
+        min(cfg.score_ceiling, max(cfg.score_floor, structural_raw)), cfg.score_precision
     )
-    priority_score = round(
-        min(cfg.score_ceiling, max(cfg.score_floor, raw)), cfg.score_precision
+    weighted_raw = structural_raw * evidence_confidence * missing_data_penalty
+    evidence_weighted_score = round(
+        min(cfg.score_ceiling, max(cfg.score_floor, weighted_raw)), cfg.score_precision
+    )
+    priority_score = (
+        evidence_weighted_score if mode == "evidence_weighted" else structural_score
     )
 
     return ScoreBreakdown(
@@ -227,6 +238,9 @@ def score_attack_path(
         privilege_factor=privilege_factor,
         evidence_confidence=evidence_confidence,
         missing_data_penalty=missing_data_penalty,
+        structural_score=structural_score,
+        evidence_weighted_score=evidence_weighted_score,
+        ranking_mode=mode,
     )
 
 
@@ -251,10 +265,18 @@ exploit-likelihood percentage, prediction of compromise, or SLA estimate.
 ## Published formula
 
 ```text
-raw_score = 100.0 * impact_weight * exposure_factor * privilege_factor
-            * evidence_confidence * missing_data_penalty
-priority_score = round(clamp({cfg.score_floor:.1f}, {cfg.score_ceiling:.1f}, raw_score), {cfg.score_precision})
+structural_raw          = 100.0 * impact_weight * exposure_factor * privilege_factor
+structural_score        = round(clamp({cfg.score_floor:.1f}, {cfg.score_ceiling:.1f}, structural_raw), {cfg.score_precision})
+evidence_weighted_score = round(clamp({cfg.score_floor:.1f}, {cfg.score_ceiling:.1f},
+                                structural_raw * evidence_confidence * missing_data_penalty), {cfg.score_precision})
+priority_score          = structural_score  # default ranking_mode="structural"
 ```
+
+Decoupling `structural_score` from epistemic certainty (`evidence_confidence`,
+`missing_data_penalty`) ensures that uncalibrated scanner confidence scores
+cannot push critical Crown Jewel attack paths below low-impact paths. Evidence
+certainty remains visible alongside `priority_score`, and callers may still
+request opt-in `ranking_mode="evidence_weighted"` when desired.
 
 The implementation and this document share one typed configuration:
 `SCORING_MODEL` in `backend/app/domain/scoring.py`. The rendered values below are

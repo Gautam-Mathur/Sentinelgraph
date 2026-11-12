@@ -348,7 +348,7 @@ export const AttackPathsPage: React.FC = () => {
               onChange={(e) => setIncludeInferred(e.target.checked)}
             />
             <label htmlFor="path-inferred">
-              Include inferred_relationship edges (adds automatic confidence penalty)
+              Include inferred_relationship edges (tracked separately in evidence confidence)
             </label>
           </div>
 

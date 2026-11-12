@@ -161,9 +161,9 @@ def test_browser_full_workflow_and_accessibility_smoke(
             assert canvas_box["width"] > 200
             assert canvas_box["height"] > 200
             page.locator("text=Betweenness Centrality").wait_for(state="visible", timeout=10000)
-            page.locator("text=Minimum Cut-Set Size").wait_for(state="visible", timeout=10000)
+            page.locator("text=Candidate Cut Size").wait_for(state="visible", timeout=10000)
 
-            page.get_by_role("tab", name="Minimum Cut-Sets").click()
+            page.get_by_role("tab", name="Candidate Cuts").click()
             preview_cut_btn = page.get_by_role("button", name="Preview").first
             preview_cut_btn.wait_for(state="visible", timeout=10000)
             preview_cut_btn.click()
@@ -338,7 +338,7 @@ def test_browser_full_workflow_and_accessibility_smoke(
             page.set_viewport_size({"width": 390, "height": 844})
             for mobile_url, marker in [
                 (f"{ui_url}/overview", ".kpi-card"),
-                (f"{ui_url}/assessments", "text=Minimum Cut-Set Size"),
+                (f"{ui_url}/assessments", "text=Candidate Cut Size"),
                 (path_detail_url, "text=Graph Engine Causal Debugger"),
             ]:
                 page.goto(mobile_url, wait_until="networkidle")

@@ -454,7 +454,7 @@ class AttackPath(Base, TimestampMixin):
     target_node_label: Mapped[str] = mapped_column(String(255), nullable=False)
     algorithm: Mapped[str] = mapped_column(String(32), nullable=False)
     algorithm_params: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
-    scoring_version: Mapped[str] = mapped_column(String(32), default="v1.0.0", nullable=False)
+    scoring_version: Mapped[str] = mapped_column(String(32), default="v2.0.0", nullable=False)
     priority_score: Mapped[float] = mapped_column(Float, nullable=False)
     impact_weight: Mapped[float] = mapped_column(Float, nullable=False)
     exposure_factor: Mapped[float] = mapped_column(Float, nullable=False)
@@ -575,7 +575,7 @@ class Report(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     report_format: Mapped[str] = mapped_column(String(16), default="html", nullable=False)
     is_synthetic_watermarked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    scoring_version: Mapped[str] = mapped_column(String(32), default="v1.0.0", nullable=False)
+    scoring_version: Mapped[str] = mapped_column(String(32), default="v2.0.0", nullable=False)
     html_content: Mapped[str] = mapped_column(Text, nullable=False)
     created_by_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False

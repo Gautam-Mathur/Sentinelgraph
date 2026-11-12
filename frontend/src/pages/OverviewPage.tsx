@@ -107,8 +107,9 @@ export const OverviewPage: React.FC = () => {
           <section className="card">
             <h2 className="card-title">Top Prioritised Attack Paths (Plausible Chains Only)</h2>
             <p style={{ marginBlockStart: 0, color: "var(--text-secondary)", fontSize: "0.9rem" }}>
-              Scores are weighted 0–100 remediation triage priorities under Scoring v1.0.0 — NOT
-              statistical probabilities of compromise.
+              Scores are weighted 0–100 structural remediation triage priorities under Scoring
+              v2.0.0 — NOT statistical probabilities of compromise. Evidence confidence and
+              missing-data penalties are reported separately.
             </p>
 
             {paths.length === 0 ? (

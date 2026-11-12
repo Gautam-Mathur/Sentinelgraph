@@ -1,4 +1,4 @@
-# SentinelGraph Scoring Model (`v1.0.0`)
+# SentinelGraph Scoring Model (`v2.0.0`)
 
 <!-- GENERATED FILE: edit ScoringModelConfig in backend/app/domain/scoring.py, not this file. -->
 
@@ -8,15 +8,23 @@ The priority score is a deterministic, normalised remediation-triage ranking on
 [`0, 100`]. It is **not** a breach probability,
 exploit-likelihood percentage, prediction of compromise, or SLA estimate.
 
-> Weighted, normalised priority ranking (0-100) for remediation triage. Not a calibrated statistical probability of breach.
+> Weighted, normalised priority ranking (0-100) for remediation triage. In v2.0.0, priority_score ranks by structural hazard (impact, exposure, privilege) and reports evidence_confidence and missing_data_penalty separately so uncalibrated scanner confidence does not demote critical attack paths. Not a calibrated statistical probability of breach.
 
 ## Published formula
 
 ```text
-raw_score = 100.0 * impact_weight * exposure_factor * privilege_factor
-            * evidence_confidence * missing_data_penalty
-priority_score = round(clamp(0.0, 100.0, raw_score), 2)
+structural_raw          = 100.0 * impact_weight * exposure_factor * privilege_factor
+structural_score        = round(clamp(0.0, 100.0, structural_raw), 2)
+evidence_weighted_score = round(clamp(0.0, 100.0,
+                                structural_raw * evidence_confidence * missing_data_penalty), 2)
+priority_score          = structural_score  # default ranking_mode="structural"
 ```
+
+Decoupling `structural_score` from epistemic certainty (`evidence_confidence`,
+`missing_data_penalty`) ensures that uncalibrated scanner confidence scores
+cannot push critical Crown Jewel attack paths below low-impact paths. Evidence
+certainty remains visible alongside `priority_score`, and callers may still
+request opt-in `ranking_mode="evidence_weighted"` when desired.
 
 The implementation and this document share one typed configuration:
 `SCORING_MODEL` in `backend/app/domain/scoring.py`. The rendered values below are

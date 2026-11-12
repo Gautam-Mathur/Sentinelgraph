@@ -158,6 +158,10 @@ class PathSearchConstraints:
     # True keeps unknown transitions as explicitly conditional hypotheses.
     # False requires every executable precondition to be known true.
     allow_unknown_preconditions: bool = True
+    # "structural" decouples triage ranking & candidate search from uncalibrated
+    # scanner confidence / missing-data penalties; "evidence_weighted" applies
+    # legacy multiplicative confidence & penalty weights.
+    ranking_mode: str = "structural"
 
 
 @dataclass
@@ -179,6 +183,8 @@ class PathStepData:
     narrative: str
     missing_corroboration: bool = False
     precondition_outcomes: list[dict[str, Any]] = field(default_factory=list)
+    capabilities_added: list[str] = field(default_factory=list)
+    capabilities_removed: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -206,3 +212,5 @@ class AttackPathResult:
     explanation_trace: dict[str, Any]
     determinism_hash: str
     steps: list[PathStepData]
+    structural_score: float = 0.0
+    evidence_weighted_score: float = 0.0

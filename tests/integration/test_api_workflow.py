@@ -173,7 +173,9 @@ def test_full_assessment_import_path_remediation_validation_and_report_workflow(
     assert gp.json()["candidates_evaluated"] >= gp.json()["paths_count"]
     assert "blocked_precondition_edge_count" in gp.json()
     top_path = gp.json()["paths"][0]
-    assert top_path["scoring_version"] == "v1.0.0"
+    assert top_path["scoring_version"] == "v2.0.0"
+    assert "structural_score" in top_path
+    assert "evidence_weighted_score" in top_path
 
     # 5. Simulate remediation removing step relationship
     rel_to_cut = top_path["steps"][0]["relationship_id"]

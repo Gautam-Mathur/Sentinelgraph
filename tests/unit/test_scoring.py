@@ -59,6 +59,7 @@ def test_scoring_is_deterministic_and_not_probability() -> None:
 def test_inferred_and_missing_data_penalties_reduce_score() -> None:
     s_node = _node("entry", entry=True)
     t_node = _node("crown", crown=True, crit="critical")
+    stale_crown = _node("crown", crown=True, crit="critical", stale=True)
     obs_steps = [
         _step(1, RelationType.CONNECTS_TO, FactKind.OBSERVED_FACT, 0.90),
         _step(2, RelationType.CAN_ADMINISTER, FactKind.OBSERVED_FACT, 0.90),
@@ -72,13 +73,76 @@ def test_inferred_and_missing_data_penalties_reduce_score() -> None:
     )
     inf_score = score_attack_path(
         start_node=s_node,
-        target_node=_node("crown", crown=True, crit="critical", stale=True),
+        target_node=stale_crown,
         steps=inf_steps,
-        path_nodes=[s_node, _node("crown", crown=True, crit="critical", stale=True)],
+        path_nodes=[s_node, stale_crown],
     )
     assert inf_score.evidence_confidence < obs_score.evidence_confidence
     assert inf_score.missing_data_penalty < obs_score.missing_data_penalty
-    assert inf_score.priority_score < obs_score.priority_score
+    assert inf_score.evidence_weighted_score < obs_score.evidence_weighted_score
+    # In default structural mode, evidence penalties remain reported separately and do not demote priority.
+    assert inf_score.ranking_mode == "structural"
+    assert inf_score.priority_score == inf_score.structural_score == obs_score.structural_score
+
+    # Opt-in legacy evidence_weighted mode preserves multiplicative penalty behavior.
+    inf_weighted = score_attack_path(
+        start_node=s_node,
+        target_node=stale_crown,
+        steps=inf_steps,
+        path_nodes=[s_node, stale_crown],
+        ranking_mode="evidence_weighted",
+    )
+    assert inf_weighted.ranking_mode == "evidence_weighted"
+    assert inf_weighted.priority_score == inf_weighted.evidence_weighted_score
+    assert inf_weighted.priority_score < obs_score.priority_score
+
+
+def test_zero_correlation_confidence_does_not_invert_structural_ranking() -> None:
+    ext_entry = _node("ext", entry=True, stale=True)
+    crown_target = _node("crown-db", crown=True, crit="critical", stale=True)
+    med_entry = _node("med-entry", entry=True)
+    med_target = _node("med-app", crown=False, crit="medium")
+
+    low_conf_critical_steps = [
+        _step(1, RelationType.EXPOSES, FactKind.INFERRED_RELATIONSHIP, 0.25, missing_corr=True),
+        _step(2, RelationType.CAN_ADMINISTER, FactKind.INFERRED_RELATIONSHIP, 0.25, missing_corr=True),
+    ]
+    high_conf_med_steps = [
+        _step(1, RelationType.CAN_ADMINISTER, FactKind.OBSERVED_FACT, 0.99),
+    ]
+
+    crit_structural = score_attack_path(
+        start_node=ext_entry,
+        target_node=crown_target,
+        steps=low_conf_critical_steps,
+        path_nodes=[ext_entry, crown_target],
+        ranking_mode="structural",
+    )
+    med_structural = score_attack_path(
+        start_node=med_entry,
+        target_node=med_target,
+        steps=high_conf_med_steps,
+        path_nodes=[med_entry, med_target],
+        ranking_mode="structural",
+    )
+    assert crit_structural.priority_score > med_structural.priority_score
+
+    # Confirm the legacy multiplicative formula WOULD invert this pair.
+    crit_weighted = score_attack_path(
+        start_node=ext_entry,
+        target_node=crown_target,
+        steps=low_conf_critical_steps,
+        path_nodes=[ext_entry, crown_target],
+        ranking_mode="evidence_weighted",
+    )
+    med_weighted = score_attack_path(
+        start_node=med_entry,
+        target_node=med_target,
+        steps=high_conf_med_steps,
+        path_nodes=[med_entry, med_target],
+        ranking_mode="evidence_weighted",
+    )
+    assert crit_weighted.priority_score < med_weighted.priority_score
 
 
 
