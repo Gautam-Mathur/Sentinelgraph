@@ -1,0 +1,43 @@
+name: SentinelGraph direct-domain research benchmarks
+on:
+  push:
+    branches: ["research/direct-domain-benchmarks-*"]
+    paths: ["research/runner/direct_domain_benchmark.py", ".github/workflows/research-benchmarks.yml"]
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install backend and benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt psutil
+      - name: Verify production imports
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: python -c "from app.domain.graph_engine import build_networkx_graph,find_attack_paths,verify_reachability; from app.domain.preconditions import apply_transition_effects; from app.domain.remediation_sim import simulate_remediation; from app.domain.scoring import score_attack_path; print('production imports OK')"
+      - name: Run Section 8 direct-domain benchmarks
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: python research/runner/direct_domain_benchmark.py section8 5
+      - name: Run Section 7 baselines
+        env:
+          PYTHONPATH: ${{ github.workspace }}/backend
+        run: python research/runner/direct_domain_benchmark.py baseline 10
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sentinelgraph-benchmark-results-${{ github.sha }}
+          path: benchmark-results/
+          if-no-files-found: warn
+          retention-days: 30
